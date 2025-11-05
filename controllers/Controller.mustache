@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
-const logger = require('../logger');
 const Service = require('../services/Service');
 
 class Controller {
