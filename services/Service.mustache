@@ -131,33 +131,34 @@ class Service {
     const apiDoc = Service.getApiDoc();
     const index = {};
     if (apiDoc && apiDoc.paths) {
-      for (const pathKey of Object.keys(apiDoc.paths)) {
+      Object.keys(apiDoc.paths).forEach((pathKey) => {
         const pathItem = apiDoc.paths[pathKey];
-        for (const methodKey of Object.keys(pathItem)) {
+        Object.keys(pathItem).forEach((methodKey) => {
           const operation = pathItem[methodKey];
-          if (operation && typeof operation === 'object' && operation.operationId) {
-            const operationId = operation.operationId;
-            if (!operationId) {
-              continue;
-            }
-            const entry = {
-              path: pathKey,
-              method: methodKey,
-              operation,
-            };
-            index[operationId] = entry;
-            const sanitizedId = Service.sanitizeOperationId(operationId);
-            if (sanitizedId && sanitizedId !== operationId) {
-              index[sanitizedId] = entry;
-            }
-            const lowerId = operationId.toLowerCase();
-            if (lowerId !== operationId && lowerId !== sanitizedId
-              && !Object.prototype.hasOwnProperty.call(index, lowerId)) {
-              index[lowerId] = entry;
-            }
+          if (!operation || typeof operation !== 'object' || !operation.operationId) {
+            return;
           }
-        }
-      }
+          const { operationId } = operation;
+          if (!operationId) {
+            return;
+          }
+          const entry = {
+            path: pathKey,
+            method: methodKey,
+            operation,
+          };
+          index[operationId] = entry;
+          const sanitizedId = Service.sanitizeOperationId(operationId);
+          if (sanitizedId && sanitizedId !== operationId) {
+            index[sanitizedId] = entry;
+          }
+          const lowerId = operationId.toLowerCase();
+          if (lowerId !== operationId && lowerId !== sanitizedId
+            && !Object.prototype.hasOwnProperty.call(index, lowerId)) {
+            index[lowerId] = entry;
+          }
+        });
+      });
     }
     Service.operationIndex = index;
     return index;
@@ -293,12 +294,12 @@ class Service {
       const obj = {};
       const properties = schema.properties || {};
       const propertyNames = Object.keys(properties);
-      for (const name of propertyNames) {
+      propertyNames.forEach((name) => {
         const exampleValue = Service.generateExampleFromSchema(properties[name], stack);
         if (exampleValue !== undefined) {
           obj[name] = exampleValue;
         }
-      }
+      });
       if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
         const additionalExample = Service.generateExampleFromSchema(schema.additionalProperties, stack);
         if (additionalExample !== undefined) {
