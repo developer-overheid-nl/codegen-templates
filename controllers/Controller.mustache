@@ -101,8 +101,37 @@ class Controller {
     return 'body';
   }
 
+  static aliasRequestBodyParam(params, bodyName, value) {
+    if (!bodyName || value === undefined) {
+      return params;
+    }
+    const result = { ...params };
+    if (!Object.prototype.hasOwnProperty.call(result, bodyName)) {
+      result[bodyName] = value;
+    }
+    if (!Object.prototype.hasOwnProperty.call(result, 'body')) {
+      result.body = value;
+    }
+    const sanitizedName = Service.sanitizeOperationId(bodyName);
+    if (sanitizedName && !Object.prototype.hasOwnProperty.call(result, sanitizedName)) {
+      result[sanitizedName] = value;
+    }
+    const lowerCaseName = bodyName.charAt(0).toLowerCase() + bodyName.slice(1);
+    if (lowerCaseName && !Object.prototype.hasOwnProperty.call(result, lowerCaseName)) {
+      result[lowerCaseName] = value;
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.keys(value).forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(result, key)) {
+          result[key] = value[key];
+        }
+      });
+    }
+    return result;
+  }
+
   static collectRequestParams(request) {
-    const requestParams = {};
+    let requestParams = {};
     if (request.openapi.schema.requestBody !== null) {
       const { content } = request.openapi.schema.requestBody;
       if (content['application/json'] !== undefined) {
@@ -118,8 +147,9 @@ class Controller {
         const requiredProperties = Array.isArray(schemaDefinition.required)
           ? schemaDefinition.required
           : [];
+        const payload = request.body || {};
         if (requiredProperties.length > 0) {
-          const missing = requiredProperties.filter((prop) => request.body[prop] === undefined);
+          const missing = requiredProperties.filter((prop) => payload[prop] === undefined);
           if (missing.length > 0) {
             throw Service.rejectResponse({
               message: `Missing required properties: ${missing.join(', ')}`,
@@ -138,7 +168,7 @@ class Controller {
           return false;
         })();
         if (!allowAdditional) {
-          const unknownProperties = Object.keys(request.body || {}).filter((prop) => !declaredProperties.includes(prop));
+          const unknownProperties = Object.keys(payload).filter((prop) => !declaredProperties.includes(prop));
           if (unknownProperties.length > 0) {
             throw Service.rejectResponse({
               message: `Unknown properties: ${unknownProperties.join(', ')}`,
@@ -147,7 +177,12 @@ class Controller {
             }, 400);
           }
         }
-        requestParams[requestBodyName] = request.body;
+        if (Object.keys(payload).length > 0) {
+          requestParams = Controller.aliasRequestBodyParam({
+            ...requestParams,
+            [requestBodyName]: payload,
+          }, requestBodyName, payload);
+        }
       } else if (content['multipart/form-data'] !== undefined) {
         Object.keys(content['multipart/form-data'].schema.properties).forEach(
           (property) => {
