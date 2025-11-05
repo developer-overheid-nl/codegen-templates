@@ -1,0 +1,21 @@
+# Mock handlers
+
+Place optional mock implementations for your services in this directory. Each mock file should match the generated service file name. For example, to mock `PetService`, create `mocks/PetService.js`:
+
+```javascript
+const Service = require('../services/Service');
+
+module.exports = {
+  listPets: async () => Service.successResponse([
+    { id: 1, name: 'Fluffy' },
+  ]),
+};
+```
+
+Export functions that match the target operationIds. A mock can return either:
+
+- A payload object (it will be wrapped with `Service.successResponse` automatically).
+- The result of `Service.successResponse(...)` for full control over status codes.
+- The result of `Service.rejectResponse(...)` (or throw an error) to simulate error responses.
+
+Enable mocks by running `npm run start-mock` (sets `USE_MOCKS=true` under the hood) or by exporting `USE_MOCKS`/`MOCKS_ENABLED` with values like `true`, `yes`, or `1`. Without custom files the generator produces automatic mock payloads derived from your OpenAPI examples/schemas; adding handlers in this directory lets you override specific operations.
