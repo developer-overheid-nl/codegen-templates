@@ -72,7 +72,7 @@ class ExpressServer {
       const pathItem = schema.paths[pathKey];
       for (const method of methods) {
         const operation = pathItem[method];
-        if (operation?.operationId) {
+        if (operation && operation.operationId) {
           const normalizedId = ExpressServer.sanitizeOperationId(operation.operationId);
           if (normalizedId && normalizedId !== operation.operationId) {
             operation['x-original-operationId'] = operation.operationId;
@@ -88,7 +88,7 @@ class ExpressServer {
     this.app = express();
     try {
       this.schema = jsYaml.safeLoad(fs.readFileSync(openApiYaml));
-      if (this.schema?.components) {
+      if (this.schema && this.schema?.components) {
         const { components } = this.schema;
         const componentMirrors = [
           'schemas',
