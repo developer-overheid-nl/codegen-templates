@@ -33,10 +33,12 @@ const {{{operationId}}} = async (params) => {
     }
     return Service.successResponse(params);
   } catch (e) {
-    throw Service.rejectResponse(
-      e.message || 'Invalid input',
-      e.status || 405,
-    );
+    const status = typeof e.status === 'number' && e.status > 0 ? e.status : 400;
+    const message = e && e.message ? e.message : 'Er is een fout opgetreden.';
+    throw Service.rejectResponse({
+      message,
+      detail: e.detail || message,
+    }, status);
   }
 };
 {{/operation}}
