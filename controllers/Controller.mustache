@@ -199,6 +199,9 @@ class Controller {
     }
 
     if (request.openapi.schema.parameters !== undefined) {
+      const queryParamNames = request.openapi.schema.parameters
+        .filter((param) => param.in === 'query')
+        .map((param) => param.name);
       request.openapi.schema.parameters.forEach((param) => {
         if (param.in === 'path') {
           requestParams[param.name] = request.openapi.pathParams[param.name];
@@ -208,6 +211,21 @@ class Controller {
           requestParams[param.name] = request.headers[param.name];
         }
       });
+      if (queryParamNames.length > 0) {
+        const unknownQueryParams = Object.keys(request.query || {})
+          .filter((key) => !queryParamNames.includes(key));
+        if (unknownQueryParams.length > 0) {
+          throw Service.rejectResponse({
+            message: `Unknown query parameters: ${unknownQueryParams.join(', ')}`,
+            field: 'query',
+            invalidParams: unknownQueryParams.map((name) => ({
+              name,
+              reason: 'Unknown query parameter',
+            })),
+            detail: `Unknown query parameters: ${unknownQueryParams.join(', ')}`,
+          }, 400);
+        }
+      }
     }
     return requestParams;
   }

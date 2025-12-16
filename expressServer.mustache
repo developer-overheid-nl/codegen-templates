@@ -162,6 +162,7 @@ class ExpressServer {
         validateRequests: {
           coerceTypes: false,
           allowUnknownBodyProperties: false,
+          allowUnknownQueryParameters: false,
         },
         operationHandlers: {
           basePath: path.join(__dirname),
@@ -170,6 +171,18 @@ class ExpressServer {
       }),
     );
     ExpressServer.registerRoutes(this.app, this.schema);
+    // Return a consistent problem response for any path/method not described in the spec
+    this.app.use((req, res) => {
+      const status = 404;
+      res.set('Content-Type', 'application/problem+json');
+      res.status(status).json({
+        type: `https://httpstatuses.com/${status}`,
+        title: ExpressServer.getStatusText(status),
+        status,
+        detail: 'Route not found',
+        instance: req.originalUrl,
+      });
+    });
   }
 
   static toExpressPath(openApiPath) {
