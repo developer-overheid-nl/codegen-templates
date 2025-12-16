@@ -132,8 +132,9 @@ class Controller {
 
   static collectRequestParams(request) {
     let requestParams = {};
-    if (request.openapi.schema.requestBody !== null) {
-      const { content } = request.openapi.schema.requestBody || {};
+    const { requestBody } = request.openapi.schema || {};
+    if (requestBody) {
+      const { content } = requestBody;
       if (content['application/json'] !== undefined) {
         const requestBodyName = this.getRequestBodyName(request);
         const schemaObject = content['application/json'].schema || {};
