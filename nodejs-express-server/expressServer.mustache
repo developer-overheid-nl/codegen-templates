@@ -12,6 +12,20 @@ const logger = require('./logger');
 const config = require('./config');
 
 class ExpressServer {
+  static extractBasePath(schema) {
+    if (!schema?.servers?.length) {
+      return '';
+    }
+    try {
+      const serverUrl = schema.servers[0].url;
+      const url = new URL(serverUrl, 'http://localhost');
+      const basePath = url.pathname.replace(/\/$/, '');
+      return basePath === '/' ? '' : basePath;
+    } catch {
+      return '';
+    }
+  }
+
   static sanitizeOperationId(operationId) {
     if (!operationId || typeof operationId !== 'string') {
       return null;
@@ -109,6 +123,7 @@ class ExpressServer {
         }
       }
       ExpressServer.normalizeOperationIds(this.schema);
+      this.basePath = ExpressServer.extractBasePath(this.schema);
     } catch (e) {
       logger.error('failed to start Express Server', e.message);
     }
@@ -170,7 +185,7 @@ class ExpressServer {
         fileUploader: { dest: config.FILE_UPLOAD_PATH },
       }),
     );
-    ExpressServer.registerRoutes(this.app, this.schema);
+    ExpressServer.registerRoutes(this.app, this.schema, this.basePath);
     // Return a consistent problem response for any path/method not described in the spec
     this.app.use((req, res) => {
       const status = 404;
@@ -219,7 +234,7 @@ class ExpressServer {
     return handler;
   }
 
-  static registerRoutes(app, schema) {
+  static registerRoutes(app, schema, basePath = '') {
     if (!schema || !schema.paths) {
       return;
     }
@@ -234,7 +249,7 @@ class ExpressServer {
       'trace',
     ];
     for (const pathKey of Object.keys(schema.paths)) {
-      const expressPath = ExpressServer.toExpressPath(pathKey);
+      const expressPath = basePath + ExpressServer.toExpressPath(pathKey);
       const pathItem = schema.paths[pathKey];
       for (const method of methods) {
         const operation = pathItem[method];
