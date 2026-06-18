@@ -1,0 +1,21 @@
+{{>partial_header}}
+package main
+
+import (
+	"log"
+	"os"
+
+	sw "{{gitHost}}/{{gitUserId}}/{{gitRepoId}}{{#isGoSubmodule}}/{{packageName}}{{/isGoSubmodule}}/{{apiPath}}"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "{{serverPort}}"
+	}
+
+	router := sw.NewRouter(sw.ApiHandleFunctions{})
+
+	log.Printf("Server is running on port %s", port)
+	log.Fatal(router.Run(":" + port))
+}

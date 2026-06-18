@@ -1,0 +1,15 @@
+{{#models}}
+{{#model}}
+export * from './{{{ classFilename }}}';
+{{/model}}
+{{/models}}
+
+export {};
+
+declare global {
+{{#models}}
+{{#model}}
+  type {{{classname}}} = import('./{{{ classFilename }}}').{{{classname}}};
+{{/model}}
+{{/models}}
+}

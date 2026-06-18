@@ -1,0 +1,658 @@
+import "reflect-metadata";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Module } from "@nestjs/common";
+import { NestFactory } from "@nestjs/core";
+import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
+import cors from "@fastify/cors";
+import addFormats from "ajv-formats";
+import { OpenAPIBackend } from "openapi-backend";
+import type { Operation, Request as OpenAPIRequest } from "openapi-backend";
+import type Ajv from "ajv";
+import { ApiModule } from "./api.module";
+
+const yaml = require("js-yaml") as { load(input: string): unknown };
+
+type RuntimeOpenAPIRequest = OpenAPIRequest & {
+  path: string;
+};
+
+type RuntimeOperation = Operation & {
+  operationId?: string;
+  path: string;
+  method: string;
+  requestBody?: {
+    content?: Record<string, unknown>;
+  };
+  responses?: Record<string, unknown>;
+};
+
+type RuntimeRequest = {
+  url: string;
+  method: string;
+  query?: unknown;
+  params?: unknown;
+  headers: Record<string, unknown>;
+};
+
+type RuntimeReply = {
+  statusCode: number;
+  status(statusCode: number): RuntimeReply;
+  type(contentType: string): RuntimeReply;
+  header(name: string, value: unknown): RuntimeReply;
+  getHeader(name: string): unknown;
+  getHeaders(): Record<string, unknown>;
+  send(payload: unknown): unknown;
+};
+
+type ValidationError = {
+  instancePath?: string;
+  schemaPath?: string;
+  keyword?: string;
+  params?: unknown;
+  message?: string;
+};
+
+type ProblemError = {
+  in: string;
+  location: string;
+  code: string;
+  detail: string;
+};
+
+const parseInt10 = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseBoolean = (value: string | undefined): boolean => {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+};
+
+const statusText = (status: number): string => {
+  const texts: Record<number, string> = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    409: "Conflict",
+    415: "Unsupported Media Type",
+    422: "Unprocessable Entity",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    501: "Not Implemented",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+  };
+  return texts[status] ?? "Unknown Error";
+};
+
+const toProblem = (status: number, title: string, errors?: ProblemError[]) => ({
+  title,
+  status,
+  ...(errors?.length ? { errors } : {}),
+});
+
+const toProblemErrors = (errors: ValidationError[] | undefined): ProblemError[] | undefined => {
+  if (!errors?.length) return undefined;
+  const bodyErrors = errors.filter((error) => ["body", "requestBody"].includes(error.instancePath?.split("/").filter(Boolean)[0] ?? ""));
+  if (bodyErrors.length > 0) {
+    return [
+      {
+        in: "body",
+        location: "body",
+        code: "body",
+        detail: bodyErrors.map((error) => error.message ?? "Invalid request body").join("\n"),
+      },
+    ];
+  }
+
+  return errors.map((error) => {
+    const params = typeof error.params === "object" && error.params !== null ? (error.params as Record<string, unknown>) : {};
+    const additionalProperty = typeof params.additionalProperty === "string" ? params.additionalProperty : undefined;
+    const location = additionalProperty ?? error.instancePath?.split("/").filter(Boolean).pop() ?? "";
+    const source = error.instancePath?.split("/").filter(Boolean)[0] ?? "";
+    const sourceMap: Record<string, string> = {
+      body: "body",
+      headers: "header",
+      path: "path",
+      params: "path",
+      query: "query",
+      cookies: "cookie",
+    };
+    return {
+      in: sourceMap[source] ?? "request",
+      location,
+      code: error.keyword ?? "validation",
+      detail: error.message ?? "Invalid value",
+    };
+  });
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const resolveJsonPointer = (document: unknown, pointer: string): unknown => {
+  if (!pointer.startsWith("#/")) return undefined;
+  return pointer
+    .slice(2)
+    .split("/")
+    .map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    .reduce<unknown>((current, part) => (isRecord(current) ? current[part] : undefined), document);
+};
+
+const resolveRef = (document: unknown, value: unknown): unknown => {
+  if (!isRecord(value) || typeof value.$ref !== "string") return value;
+  return resolveJsonPointer(document, value.$ref) ?? value;
+};
+
+const getResponseObject = (document: unknown, operation: RuntimeOperation | undefined, statusCode: number): Record<string, unknown> | undefined => {
+  if (!operation?.responses) return undefined;
+  const responses = operation.responses;
+  const response = responses[String(statusCode)] ?? responses[`${Math.floor(statusCode / 100)}XX`] ?? responses.default;
+  const resolved = resolveRef(document, response);
+  return isRecord(resolved) ? resolved : undefined;
+};
+
+const getResponseContentTypes = (responseObject: Record<string, unknown> | undefined): string[] => {
+  const content = responseObject?.content;
+  return isRecord(content) ? Object.keys(content) : [];
+};
+
+const getResponseMediaObject = (
+  document: unknown,
+  responseObject: Record<string, unknown> | undefined,
+  contentType: string | undefined,
+): Record<string, unknown> | undefined => {
+  if (!contentType || !isRecord(responseObject?.content)) return undefined;
+  const content = responseObject.content;
+  const mediaType = Object.keys(content).find((candidate) => mediaTypeMatches(contentType, candidate));
+  const mediaObject = mediaType ? resolveRef(document, content[mediaType]) : undefined;
+  return isRecord(mediaObject) ? mediaObject : undefined;
+};
+
+const acceptsMediaType = (acceptHeader: unknown, mediaType: string): boolean => {
+  if (typeof acceptHeader !== "string" || acceptHeader.trim() === "" || acceptHeader.includes("*/*")) return true;
+  return acceptHeader
+    .split(",")
+    .map((part) => part.split(";")[0]?.trim() ?? "")
+    .some((accepted) => mediaTypeMatches(mediaType, accepted));
+};
+
+const chooseResponseContentType = (request: RuntimeRequest, responseObject: Record<string, unknown> | undefined): string | undefined => {
+  const contentTypes = getResponseContentTypes(responseObject);
+  if (contentTypes.length === 0) return undefined;
+  return contentTypes.find((mediaType) => acceptsMediaType(request.headers.accept, mediaType)) ?? contentTypes[0];
+};
+
+const getSchemaType = (schema: unknown): string | undefined => {
+  if (!isRecord(schema)) return undefined;
+  if (typeof schema.type === "string") return schema.type;
+  if (Array.isArray(schema.type)) return schema.type.find((type) => type !== "null");
+  if (schema.format === "date-time" || schema.format === "date" || schema.format === "uri") return "string";
+  return undefined;
+};
+
+const getExampleValue = (document: unknown, value: unknown): unknown => {
+  const resolved = resolveRef(document, value);
+  if (!isRecord(resolved)) return undefined;
+  if ("value" in resolved) return resolved.value;
+  return undefined;
+};
+
+const firstDefined = (...values: unknown[]): unknown => values.find((value) => value !== undefined);
+
+const mockFromSchema = (document: unknown, schema: unknown, seen = new Set<unknown>()): unknown => {
+  const resolvedSchema = resolveRef(document, schema);
+  if (!isRecord(resolvedSchema)) return {};
+  if (seen.has(resolvedSchema)) return {};
+  seen.add(resolvedSchema);
+
+  const directValue = firstDefined(resolvedSchema.example, resolvedSchema.default, resolvedSchema.const);
+  if (directValue !== undefined) return directValue;
+  if (Array.isArray(resolvedSchema.examples) && resolvedSchema.examples.length > 0) return resolvedSchema.examples[0];
+  if (Array.isArray(resolvedSchema.enum) && resolvedSchema.enum.length > 0) {
+    return resolvedSchema.enum.find((value) => value !== null) ?? resolvedSchema.enum[0];
+  }
+
+  if (Array.isArray(resolvedSchema.allOf)) {
+    const values = resolvedSchema.allOf.map((item) => mockFromSchema(document, item, seen));
+    if (values.every(isRecord)) return Object.assign({}, ...values);
+    return values.find((value) => value !== undefined && value !== null) ?? {};
+  }
+
+  const union = Array.isArray(resolvedSchema.oneOf)
+    ? resolvedSchema.oneOf
+    : Array.isArray(resolvedSchema.anyOf)
+      ? resolvedSchema.anyOf
+      : undefined;
+  if (union) {
+    const preferred = union.find((item) => getSchemaType(resolveRef(document, item)) !== "null") ?? union[0];
+    return mockFromSchema(document, preferred, seen);
+  }
+
+  const schemaType = getSchemaType(resolvedSchema);
+  if (schemaType === "array") return [mockFromSchema(document, resolvedSchema.items, seen)];
+  if (schemaType === "object" || isRecord(resolvedSchema.properties)) {
+    const properties = isRecord(resolvedSchema.properties) ? resolvedSchema.properties : {};
+    return Object.fromEntries(Object.entries(properties).map(([name, propertySchema]) => [name, mockFromSchema(document, propertySchema, seen)]));
+  }
+  if (schemaType === "integer" || schemaType === "number") return 0;
+  if (schemaType === "boolean") return true;
+  if (schemaType === "null") return null;
+
+  if (resolvedSchema.format === "email") return "user@example.com";
+  if (resolvedSchema.format === "uri" || resolvedSchema.format === "url") return "https://example.com/path";
+  if (resolvedSchema.format === "uuid") return "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  if (resolvedSchema.format === "date") return "1970-01-01";
+  if (resolvedSchema.format === "date-time") return "1970-01-01T00:00:00.000Z";
+  return "string";
+};
+
+const getMediaExample = (document: unknown, mediaObject: Record<string, unknown> | undefined): unknown => {
+  if (!mediaObject) return undefined;
+  if ("example" in mediaObject) return mediaObject.example;
+  if (isRecord(mediaObject.examples)) {
+    for (const example of Object.values(mediaObject.examples)) {
+      const value = getExampleValue(document, example);
+      if (value !== undefined) return value;
+    }
+  }
+  return undefined;
+};
+
+const selectMockStatusCode = (operation: RuntimeOperation): number => {
+  const responseCodes = Object.keys(operation.responses ?? {});
+  const successCode = responseCodes.find((code) => /^[23]\d\d$/.test(code));
+  if (successCode) return Number.parseInt(successCode, 10);
+  const numericCode = responseCodes.find((code) => /^\d\d\d$/.test(code));
+  return numericCode ? Number.parseInt(numericCode, 10) : 200;
+};
+
+const mockResponseForOperation = (
+  document: unknown,
+  request: RuntimeRequest,
+  operation: RuntimeOperation,
+): { status: number; body: unknown; contentType?: string } => {
+  const status = selectMockStatusCode(operation);
+  const responseObject = getResponseObject(document, operation, status);
+  const contentType = chooseResponseContentType(request, responseObject);
+  const mediaObject = getResponseMediaObject(document, responseObject, contentType);
+  const example = getMediaExample(document, mediaObject);
+  const schema = mediaObject?.schema;
+  return {
+    status,
+    contentType,
+    body: example !== undefined ? example : schema !== undefined ? mockFromSchema(document, schema) : undefined,
+  };
+};
+
+const firstQueryValue = (query: unknown, names: string[]): string | undefined => {
+  if (!isRecord(query)) return undefined;
+  const lowerCaseEntries = new Map(Object.entries(query).map(([key, value]) => [key.toLowerCase(), value]));
+  for (const name of names) {
+    const value = lowerCaseEntries.get(name.toLowerCase());
+    if (Array.isArray(value)) return value[0] === undefined ? undefined : String(value[0]);
+    if (value !== undefined) return String(value);
+  }
+  return undefined;
+};
+
+const firstPathValue = (params: unknown, names: string[]): string | undefined => {
+  if (!isRecord(params)) return undefined;
+  const lowerCaseEntries = new Map(Object.entries(params).map(([key, value]) => [key.toLowerCase(), value]));
+  for (const name of names) {
+    const value = lowerCaseEntries.get(name.toLowerCase());
+    if (value !== undefined) return String(value);
+  }
+  return undefined;
+};
+
+const buildPaginationLink = (request: RuntimeRequest): string => {
+  const url = new URL(request.url, "http://localhost");
+  const currentPage = Number.parseInt(firstQueryValue(request.query, ["page", "Page"]) ?? "1", 10) || 1;
+  const perPage = Number.parseInt(firstQueryValue(request.query, ["perPage", "PerPage"]) ?? "20", 10) || 20;
+  const totalPages = Math.max(currentPage, 1);
+  const withPage = (page: number) => {
+    const nextUrl = new URL(url.toString());
+    nextUrl.searchParams.set("page", String(page));
+    nextUrl.searchParams.set("perPage", String(perPage));
+    return `${nextUrl.pathname}${nextUrl.search}`;
+  };
+  return [`<${withPage(1)}>; rel="first"`, `<${withPage(totalPages)}>; rel="last"`].join(", ");
+};
+
+const mockPagination = (request: RuntimeRequest): { currentPage: number; perPage: number; totalPages: number; totalCount: number } => {
+  const currentPage = Math.max(Number.parseInt(firstQueryValue(request.query, ["page", "Page"]) ?? "1", 10) || 1, 1);
+  const perPage = Math.max(Number.parseInt(firstQueryValue(request.query, ["perPage", "PerPage"]) ?? "20", 10) || 20, 1);
+  const totalPages = Math.max(currentPage, 1);
+  return {
+    currentPage,
+    perPage,
+    totalPages,
+    totalCount: (totalPages - 1) * perPage + 1,
+  };
+};
+
+const mockHeaderValue = (name: string, schema: unknown, request: RuntimeRequest, apiVersion: string | undefined): string => {
+  const normalizedName = name.toLowerCase();
+  const pagination = mockPagination(request);
+  if (normalizedName === "api-version") return apiVersion ?? "1.0.0";
+  if (normalizedName === "link") return buildPaginationLink(request);
+  if (normalizedName === "total-count") return String(pagination.totalCount);
+  if (normalizedName === "current-page") return String(pagination.currentPage);
+  if (normalizedName === "per-page") return String(pagination.perPage);
+  if (normalizedName === "total-pages") return String(pagination.totalPages);
+  if (normalizedName === "oas-version") return firstPathValue(request.params, ["version", "oasVersion", "OASVersion"]) ?? "mock";
+  if (normalizedName === "oas-source") return "mock";
+
+  const schemaType = getSchemaType(schema);
+  if (schemaType === "integer" || schemaType === "number") return "1";
+  if (schemaType === "boolean") return "true";
+  return "string";
+};
+
+const applyDeclaredResponseMetadata = (
+  document: unknown,
+  request: RuntimeRequest,
+  reply: RuntimeReply,
+  operation: RuntimeOperation | undefined,
+  statusCode: number,
+  apiVersion: string | undefined,
+) => {
+  const responseObject = getResponseObject(document, operation, statusCode);
+  const declaredHeaders = responseObject?.headers;
+  if (isRecord(declaredHeaders)) {
+    for (const [headerName, headerDefinition] of Object.entries(declaredHeaders)) {
+      if (reply.getHeader(headerName) !== undefined) continue;
+      const resolvedHeader = resolveRef(document, headerDefinition);
+      const schema = isRecord(resolvedHeader) ? resolveRef(document, resolvedHeader.schema) : undefined;
+      reply.header(headerName, mockHeaderValue(headerName, schema, request, apiVersion));
+    }
+  }
+
+  if (apiVersion && !reply.getHeader("API-Version")) reply.header("API-Version", apiVersion);
+
+  const contentType = chooseResponseContentType(request, responseObject);
+  if (contentType && !reply.getHeader("content-type")) reply.type(contentType);
+};
+
+const sendProblem = (
+  document: unknown,
+  request: RuntimeRequest,
+  reply: RuntimeReply,
+  operation: RuntimeOperation | undefined,
+  status: number,
+  title: string,
+  apiVersion: string | undefined,
+  errors?: ValidationError[],
+) => {
+  applyDeclaredResponseMetadata(document, request, reply.status(status), operation, status, apiVersion);
+  if (!reply.getHeader("content-type")) reply.type("application/problem+json");
+  return reply.send(toProblem(status, title, toProblemErrors(errors)));
+};
+
+const escapeRegExp = (input: string): string => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const openApiPathToRegExp = (path: string): RegExp => {
+  const source = path
+    .split("/")
+    .map((part) => (part.startsWith("{") && part.endsWith("}") ? "[^/]+" : escapeRegExp(part)))
+    .join("/");
+  return new RegExp(`^${source}/?$`);
+};
+
+const toHeaderRecord = (headers: Record<string, unknown>): Record<string, string | string[]> => {
+  const result: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) result[key] = value.map(String);
+    else if (value !== undefined) result[key] = String(value);
+  }
+  return result;
+};
+
+const hasOpenApiPath = (document: unknown, path: string): boolean =>
+  typeof document === "object" &&
+  document !== null &&
+  "paths" in document &&
+  typeof (document as { paths?: unknown }).paths === "object" &&
+  (document as { paths: Record<string, unknown> }).paths !== null &&
+  path in (document as { paths: Record<string, unknown> }).paths;
+
+const isJsonLikeContentType = (contentType: unknown): boolean =>
+  typeof contentType === "string" && /\bjson\b/i.test(contentType);
+
+const normalizeMediaType = (contentType: string): string => contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+
+const mediaTypeMatches = (actual: string, expected: string): boolean => {
+  const normalizedActual = normalizeMediaType(actual);
+  const normalizedExpected = normalizeMediaType(expected);
+  if (normalizedActual === normalizedExpected) return true;
+  if (normalizedExpected === "*/*") return true;
+  const [expectedType, expectedSubtype] = normalizedExpected.split("/");
+  const [actualType, actualSubtype] = normalizedActual.split("/");
+  if (!expectedType || !expectedSubtype || !actualType || !actualSubtype) return false;
+  if (expectedSubtype === "*") return expectedType === actualType;
+  return expectedSubtype.startsWith("*+") && actualSubtype.endsWith(expectedSubtype.slice(1)) && expectedType === actualType;
+};
+
+const hasUnsupportedRequestMediaType = (operation: RuntimeOperation, contentType: unknown, body: unknown): boolean => {
+  const allowedMediaTypes = Object.keys(operation.requestBody?.content ?? {});
+  if (allowedMediaTypes.length === 0 || body === undefined) return false;
+  if (typeof contentType !== "string" || contentType.trim() === "") return true;
+  return !allowedMediaTypes.some((mediaType) => mediaTypeMatches(contentType, mediaType));
+};
+
+const isDeclaredResponseStatus = (operation: RuntimeOperation, statusCode: number): boolean => {
+  const responses = operation.responses ?? {};
+  return String(statusCode) in responses || `${Math.floor(statusCode / 100)}XX` in responses || "default" in responses;
+};
+
+const chooseDeclaredResponseStatus = (operation: RuntimeOperation | undefined, statusCode: number): number => {
+  if (!operation || statusCode >= 400 || isDeclaredResponseStatus(operation, statusCode)) return statusCode;
+  return selectMockStatusCode(operation);
+};
+
+@Catch()
+class ProblemDetailsFilter implements ExceptionFilter {
+  catch(error: unknown, host: ArgumentsHost) {
+    const context = host.switchToHttp();
+    const request = context.getRequest<{ url?: string }>();
+    const reply = context.getResponse();
+    const status = error instanceof HttpException ? error.getStatus() : 500;
+    const response = error instanceof HttpException ? error.getResponse() : undefined;
+    const detail =
+      typeof response === "object" && response !== null && "message" in response
+        ? Array.isArray((response as { message?: unknown }).message)
+          ? (response as { message: unknown[] }).message.join(", ")
+          : String((response as { message?: unknown }).message)
+        : error instanceof Error
+          ? error.message
+          : statusText(status);
+
+    reply.status(status).type("application/problem+json").send(toProblem(status, detail));
+  }
+}
+
+@Module({
+  imports: [ApiModule.forRoot()],
+})
+class AppModule {}
+
+const bootstrap = async () => {
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ bodyLimit: 14 * 1024 * 1024 }));
+  await app.register(cors);
+  app.useGlobalFilters(new ProblemDetailsFilter());
+
+  const openapiYaml = readFileSync(join(process.cwd(), "api", "openapi.yaml"), "utf8");
+  const openapiDocument = yaml.load(openapiYaml);
+  const openapi = new OpenAPIBackend({
+    definition: openapiDocument as never,
+    quick: true,
+    validate: true,
+    coerceTypes: true,
+    ajvOpts: {
+      allErrors: true,
+      strict: false,
+    },
+    customizeAjv: (ajv: Ajv) => addFormats(ajv),
+  });
+  await openapi.init();
+
+  const apiVersion =
+    typeof openapiDocument === "object" && openapiDocument !== null && "info" in openapiDocument
+      ? (openapiDocument as { info?: { version?: string } }).info?.version
+      : undefined;
+  const mockResponses = parseBoolean(process.env.OPENAPI_MOCK);
+  const validateResponses = parseBoolean(process.env.OPENAPI_VALIDATE_RESPONSES);
+  const operations = openapi.getOperations() as RuntimeOperation[];
+  const operationPaths = operations.map((operation) => ({
+    operation,
+    pathPattern: openApiPathToRegExp(operation.path),
+  }));
+  const generatedOpenApiPaths = new Set<string>();
+  if (!hasOpenApiPath(openapiDocument, "/openapi.yaml")) generatedOpenApiPaths.add("/openapi.yaml");
+  if (!hasOpenApiPath(openapiDocument, "/openapi.json")) generatedOpenApiPaths.add("/openapi.json");
+  const isGeneratedOpenApiEndpoint = (path: string): boolean => generatedOpenApiPaths.has(path.split("?")[0] ?? path);
+
+  const fastify = app.getHttpAdapter().getInstance();
+
+  fastify.addHook("preValidation", async (request, reply) => {
+    if (isGeneratedOpenApiEndpoint(request.url)) return;
+
+    const openapiRequest: RuntimeOpenAPIRequest = {
+      method: request.method,
+      path: request.url,
+      body: request.body,
+      query: request.query as Record<string, string | string[]> | string | undefined,
+      headers: toHeaderRecord(request.headers),
+    };
+    const operation = openapi.matchOperation(openapiRequest) as RuntimeOperation | undefined;
+
+    if (!operation) {
+      const requestPath = request.url.split("?")[0] ?? request.url;
+      const allowedMethods = operationPaths
+        .filter(({ pathPattern }) => pathPattern.test(requestPath))
+        .map(({ operation: candidate }) => candidate.method.toUpperCase());
+
+      if (allowedMethods.length > 0) {
+        reply.header("Allow", [...new Set(allowedMethods)].sort().join(", "));
+        return sendProblem(
+          openapiDocument,
+          request as RuntimeRequest,
+          reply as RuntimeReply,
+          undefined,
+          405,
+          `Method ${request.method} is not allowed for ${requestPath}`,
+          apiVersion,
+        );
+      }
+      return;
+    }
+
+    const operationId = operation.operationId;
+    if (hasUnsupportedRequestMediaType(operation, request.headers["content-type"], request.body)) {
+      return sendProblem(
+        openapiDocument,
+        request as RuntimeRequest,
+        reply as RuntimeReply,
+        operation,
+        415,
+        "Request content type is not supported by the OpenAPI operation",
+        apiVersion,
+      );
+    }
+
+    const validation = openapi.validateRequest(openapiRequest, operationId);
+    if (!validation.valid) {
+      const status = validation.errors?.some((error) => error.keyword === "contentType") ? 415 : 400;
+      return sendProblem(
+        openapiDocument,
+        request as RuntimeRequest,
+        reply as RuntimeReply,
+        operation,
+        status,
+          "Request validation failed",
+        apiVersion,
+        validation.errors ?? undefined,
+      );
+    }
+
+    (request as { openapiOperation?: RuntimeOperation }).openapiOperation = operation;
+
+    if (mockResponses) {
+      const mocked = mockResponseForOperation(openapiDocument, request as RuntimeRequest, operation);
+      applyDeclaredResponseMetadata(
+        openapiDocument,
+        request as RuntimeRequest,
+        reply.status(mocked.status) as RuntimeReply,
+        operation,
+        mocked.status,
+        apiVersion,
+      );
+      if (mocked.contentType && !reply.getHeader("content-type")) reply.type(mocked.contentType);
+      return reply.send(mocked.body);
+    }
+  });
+
+  fastify.addHook("onSend", async (_request, reply, payload) => {
+    const request = _request as RuntimeRequest & { openapiOperation?: RuntimeOperation };
+    const statusCode = chooseDeclaredResponseStatus(request.openapiOperation, reply.statusCode);
+    if (statusCode !== reply.statusCode) reply.status(statusCode);
+    applyDeclaredResponseMetadata(openapiDocument, request, reply as RuntimeReply, request.openapiOperation, statusCode, apiVersion);
+    return payload;
+  });
+  fastify.addHook("onSend", async (request, reply, payload) => {
+    if (!validateResponses) return payload;
+    if (isGeneratedOpenApiEndpoint(request.url)) return payload;
+
+    const operation = (request as { openapiOperation?: RuntimeOperation }).openapiOperation;
+    const operationId = operation?.operationId;
+    if (!operationId) return payload;
+
+    const statusCode = reply.statusCode;
+    if (!isDeclaredResponseStatus(operation, statusCode)) {
+      reply.status(502).type("application/problem+json");
+      return JSON.stringify(toProblem(502, `Response status ${statusCode} is not declared in the OpenAPI specification`));
+    }
+
+    const contentType = reply.getHeader("content-type");
+    const responseBody =
+      typeof payload === "string" && isJsonLikeContentType(contentType)
+        ? JSON.parse(payload)
+        : payload;
+    const bodyValidation = openapi.validateResponse(responseBody, operationId, statusCode);
+    if (!bodyValidation.valid) {
+      reply.status(502).type("application/problem+json");
+      return JSON.stringify(
+        toProblem(502, "Response body does not match the OpenAPI specification", toProblemErrors(bodyValidation.errors ?? undefined)),
+      );
+    }
+
+    const headerValidation = openapi.validateResponseHeaders(reply.getHeaders(), operationId, {
+      statusCode,
+    });
+    if (!headerValidation.valid) {
+      reply.status(502).type("application/problem+json");
+      return JSON.stringify(
+        toProblem(502, "Response headers do not match the OpenAPI specification", toProblemErrors(headerValidation.errors ?? undefined)),
+      );
+    }
+
+    return payload;
+  });
+  if (generatedOpenApiPaths.has("/openapi.yaml")) {
+    fastify.get("/openapi.yaml", async (_request, reply) => reply.type("text/yaml; charset=utf-8").send(openapiYaml));
+  }
+  if (generatedOpenApiPaths.has("/openapi.json")) {
+    fastify.get("/openapi.json", async () => openapiDocument);
+  }
+
+  await app.listen(parseInt10(process.env.PORT, 1338), process.env.HOST ?? "0.0.0.0");
+};
+
+bootstrap();

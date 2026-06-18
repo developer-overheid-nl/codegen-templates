@@ -1,0 +1,176 @@
+{{>partial_header}}
+package {{packageName}}
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+const openAPIPath = "api/openapi.yaml"
+
+type ProblemError struct {
+	In       string `json:"in,omitempty"`
+	Location string `json:"location,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type Problem struct {
+	Title  string         `json:"title"`
+	Status int            `json:"status"`
+	Errors []ProblemError `json:"errors,omitempty"`
+}
+
+{{#apiInfo}}{{#apis}}{{#operations}}
+type {{classname}} interface {
+{{#operation}}
+	{{operationId}}(c *gin.Context)
+{{/operation}}
+}
+
+{{/operations}}{{/apis}}{{/apiInfo}}{{#webhooks}}{{#operations}}
+type {{classname}} interface {
+{{#operation}}
+	{{operationId}}(c *gin.Context)
+{{/operation}}
+}
+
+{{/operations}}{{/webhooks}}
+
+// Route is the information for every URI.
+type Route struct {
+	Name        string
+	Method      string
+	Pattern     string
+	HandlerFunc gin.HandlerFunc
+}
+
+func NewRouter(handleFunctions ApiHandleFunctions) *gin.Engine {
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.Default()
+	router.HandleMethodNotAllowed = true
+	return NewRouterWithGinEngine(router, handleFunctions)
+}
+
+func NewRouterWithGinEngine(router *gin.Engine, handleFunctions ApiHandleFunctions) *gin.Engine {
+	installDefaultMiddleware(router)
+
+	registeredRoutes := map[string]struct{}{}
+	for _, route := range getRoutes(handleFunctions) {
+		routeKey := route.Method + " " + route.Pattern
+		if _, exists := registeredRoutes[routeKey]; exists {
+			continue
+		}
+		registeredRoutes[routeKey] = struct{}{}
+
+		handler := route.HandlerFunc
+		if handler == nil {
+			handler = DefaultHandleFunc
+		}
+		switch route.Method {
+		case http.MethodGet:
+			router.GET(route.Pattern, handler)
+		case http.MethodPost:
+			router.POST(route.Pattern, handler)
+		case http.MethodPut:
+			router.PUT(route.Pattern, handler)
+		case http.MethodPatch:
+			router.PATCH(route.Pattern, handler)
+		case http.MethodDelete:
+			router.DELETE(route.Pattern, handler)
+		}
+	}
+
+	router.GET("/openapi.yaml", serveOpenAPI)
+{{#basePathWithoutHost}}
+	router.GET("{{{basePathWithoutHost}}}/openapi.yaml", serveOpenAPI)
+{{/basePathWithoutHost}}
+	router.NoRoute(func(c *gin.Context) {
+		writeProblem(c, http.StatusNotFound, "Resource not found", nil)
+	})
+	router.NoMethod(func(c *gin.Context) {
+		writeProblem(c, http.StatusMethodNotAllowed, "Method not allowed", nil)
+	})
+
+	return router
+}
+
+func installDefaultMiddleware(router *gin.Engine) {
+	router.Use(func(c *gin.Context) {
+		c.Header("API-Version", "{{appVersion}}")
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, API-Version, X-Api-Key")
+		c.Header("Access-Control-Expose-Headers", "API-Version, Link, Total-Count, Total-Pages, Per-Page, Current-Page")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	})
+}
+
+func serveOpenAPI(c *gin.Context) {
+	c.Header("Content-Type", "application/yaml")
+	c.File(openAPIPath)
+}
+
+func DefaultHandleFunc(c *gin.Context) {
+	writeProblem(c, http.StatusNotImplemented, "Operation is not implemented", []ProblemError{
+		newProblemError("request", strings.TrimPrefix(c.FullPath(), "/"), "not_implemented", "Provide a handler in ApiHandleFunctions to implement this operation."),
+	})
+}
+
+func writeProblem(c *gin.Context, status int, title string, errors []ProblemError) {
+	c.Header("Content-Type", "application/problem+json")
+	c.AbortWithStatusJSON(status, Problem{
+		Title:  title,
+		Status: status,
+		Errors: errors,
+	})
+}
+
+func newProblemError(in string, location string, code string, detail string) ProblemError {
+	return ProblemError{
+		In:       in,
+		Location: location,
+		Code:     code,
+		Detail:   detail,
+	}
+}
+
+type ApiHandleFunctions struct {
+{{#apiInfo}}{{#apis}}{{#operations}}
+	// Routes for the {{classname}} part of the API.
+	{{classname}} {{classname}}{{/operations}}{{/apis}}{{/apiInfo}}{{#webhooks}}{{#operations}}
+	{{classname}} {{classname}}{{/operations}}{{/webhooks}}
+}
+
+func getRoutes(handleFunctions ApiHandleFunctions) []Route {
+	return []Route{ {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+		{
+			"{{operationId}}",
+			http.Method{{httpMethod}},
+			"{{{basePathWithoutHost}}}{{{path}}}",
+			handlerOrDefault(handleFunctions.{{classname}}, func(api {{classname}}) gin.HandlerFunc { return api.{{operationId}} }),
+		},{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}{{#webhooks}}{{#operations}}{{#operation}}
+		{
+			"{{operationId}}",
+			http.Method{{httpMethod}},
+			"{{{basePathWithoutHost}}}{{{path}}}",
+			handlerOrDefault(handleFunctions.{{classname}}, func(api {{classname}}) gin.HandlerFunc { return api.{{operationId}} }),
+		},{{/operation}}{{/operations}}{{/webhooks}}
+	}
+}
+
+func handlerOrDefault[T any](api T, selectHandler func(T) gin.HandlerFunc) gin.HandlerFunc {
+	if any(api) == nil {
+		return DefaultHandleFunc
+	}
+	handler := selectHandler(api)
+	if handler == nil {
+		return DefaultHandleFunc
+	}
+	return handler
+}

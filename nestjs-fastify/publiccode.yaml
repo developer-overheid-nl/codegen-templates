@@ -1,0 +1,63 @@
+publiccodeYmlVersion: "0.5"
+
+name: OpenAPI Generator NestJS Fastify Template
+url: https://github.com/developer-overheid-nl/openapi-generator-nestjs-fastify-template
+landingURL: https://apis.developer.overheid.nl
+
+categories:
+  - it-development
+
+softwareType: standalone/other
+
+platforms:
+  - web
+
+developmentStatus: development
+
+description:
+  nl:
+    shortDescription: >-
+      OpenAPI Generator-template voor het genereren van NestJS API-endpoints op
+      Fastify vanuit een OpenAPI-specificatie.
+    longDescription: |
+      Deze template genereert een TypeScript API-project op basis van de
+      officiële OpenAPI Generator `typescript-nestjs-server` generator. De
+      gegenereerde applicatie draait met NestJS op de Fastify adapter en gebruikt
+      de OpenAPI-specificatie als bron voor controllers, routes en types.
+
+      De template is bedoeld voor API-first projecten waarin de OpenAPI
+      specificatie leidend is en de gegenereerde endpointlaag alleen doorverwijst
+      naar domeinlogica in aparte packages. De gegenereerde applicatie bevat een
+      startbare runtime, Fastify bootstrap, problem-details foutafhandeling,
+      OpenAPI-publicatie endpoints en standaard 501-responses voor nog niet
+      geimplementeerde operaties.
+    features:
+      - Generatie via de standaard OpenAPI Generator CLI
+      - TypeScript NestJS controllers en models uit OpenAPI
+      - Fastify runtime via @nestjs/platform-fastify
+      - Problem Details responses voor fouten
+      - OpenAPI document publiceren als YAML en JSON
+      - Standaard 501-responses voor nog niet geimplementeerde operaties
+
+legal:
+  license: EUPL-1.2
+  mainCopyrightOwner: Geonovum
+
+intendedAudience:
+  countries:
+    - NL
+  scope:
+    - government
+
+localisation:
+  availableLanguages:
+    - nl
+    - en
+  localisationReady: false
+
+maintenance:
+  type: internal
+  contacts:
+    - name: Team developer.overheid.nl
+      email: developer.overheid@geonovum.nl
+      affiliation: Geonovum

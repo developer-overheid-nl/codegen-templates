@@ -1,0 +1,23 @@
+import { Body, Controller, DefaultValuePipe{{#httpMethods}}, {{.}}{{/httpMethods}}, Inject, Param, ParseIntPipe, ParseFloatPipe, Query, Req, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
+import { Observable } from 'rxjs';
+import { Cookies, Headers } from '../decorators';
+import { {{classname}} } from '../{{apiPackage}}';
+{{#tsImports.0}}
+import { {{#tsImports}}{{classname}}, {{/tsImports}} } from '../{{modelPackage}}';
+{{/tsImports.0}}
+
+@Controller()
+export class {{classname}}Controller {
+  constructor(@Inject({{classname}}) private readonly {{classVarName}}: {{classname}}) {}
+
+{{#operations}}
+{{#operation}}
+  @{{#vendorExtensions.x-http-method}}{{.}}{{/vendorExtensions.x-http-method}}{{^vendorExtensions.x-http-method}}{{httpMethod}}{{/vendorExtensions.x-http-method}}('{{path}}')
+  {{operationId}}({{#allParams}}{{#isPathParam}}@Param('{{baseName}}'{{>paramPipe}}) {{/isPathParam}}{{#isQueryParam}}@Query('{{baseName}}'{{>paramPipe}}) {{/isQueryParam}}{{#isHeaderParam}}@Headers('{{baseName}}'{{>paramPipe}}) {{/isHeaderParam}}{{#isCookieParam}}@Cookies('{{baseName}}'{{>paramPipe}}) {{/isCookieParam}}{{#isBodyParam}}@Body() {{/isBodyParam}}{{paramName}}: {{{dataType}}}{{#isNullable}} | null{{/isNullable}}{{^required}} | undefined{{/required}}, {{/allParams}}@Req() request: Request, @Res({ passthrough: true }) reply: FastifyReply): {{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}} | Promise<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> | Observable<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> {
+    return this.{{classVarName}}.{{operationId}}({{#useSingleRequestParameter}}{ {{/useSingleRequestParameter}}{{#allParams}}{{paramName}}, {{/allParams}}{{#useSingleRequestParameter}}}, {{/useSingleRequestParameter}}request, reply);
+  }
+
+{{/operation}}
+{{/operations}}
+}

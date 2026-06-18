@@ -1,0 +1,7 @@
+files:
+  openapi.mustache:
+    templateType: SupportingFiles
+    destinationFilename: api/openapi.yaml
+  root-readme.mustache:
+    templateType: SupportingFiles
+    destinationFilename: README.md

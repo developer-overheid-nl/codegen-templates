@@ -1,0 +1,77 @@
+import { DynamicModule, HttpException, Module, Provider } from '@nestjs/common';
+import { ApiImplementations } from './api-implementations'
+{{#apiInfo}}
+{{#apis}}
+import { {{classname}} } from '../{{apiPackage}}';
+import { {{classname}}Controller } from '../controllers';
+{{/apis}}
+{{/apiInfo}}
+
+const createNotImplementedProvider = (apiName: string) =>
+  new Proxy(
+    {},
+    {
+      get: (_target, property) => {
+        if (typeof property !== 'string') return undefined;
+        if (
+          property === 'then' ||
+          property === 'onModuleInit' ||
+          property === 'onApplicationBootstrap' ||
+          property === 'onModuleDestroy' ||
+          property === 'beforeApplicationShutdown' ||
+          property === 'onApplicationShutdown'
+        ) {
+          return undefined;
+        }
+        return () => {
+          throw new HttpException(`Operation ${property} is not implemented in ${apiName}`, 501);
+        };
+      },
+    },
+  );
+
+export type ApiModuleConfiguration = {
+  /**
+  * your Api implementations
+  */
+  apiImplementations?: Partial<ApiImplementations>,
+  /**
+  * additional Providers that may be used by your implementations
+  */
+  providers?: Provider[],
+}
+
+@Module({})
+export class ApiModule {
+  static forRoot(configuration: ApiModuleConfiguration = {}): DynamicModule {
+      const providers: Provider[] = [
+{{#apiInfo}}
+{{#apis}}
+        configuration.apiImplementations?.{{#lambda.camelcase}}{{classname}}{{/lambda.camelcase}}
+          ? {
+              provide: {{classname}},
+              useClass: configuration.apiImplementations.{{#lambda.camelcase}}{{classname}}{{/lambda.camelcase}},
+            }
+          : {
+              provide: {{classname}},
+              useValue: createNotImplementedProvider('{{classname}}'),
+            },
+{{/apis}}
+{{/apiInfo}}
+        ...(configuration.providers || []),
+      ];
+
+      return {
+        module: ApiModule,
+        controllers: [
+{{#apiInfo}}
+{{#apis}}
+          {{classname}}Controller,
+{{/apis}}
+{{/apiInfo}}
+        ],
+        providers: [...providers],
+        exports: [...providers]
+      }
+    }
+}

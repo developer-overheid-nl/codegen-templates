@@ -1,0 +1,27 @@
+{{>partial_header}}
+package {{packageName}}
+
+{{#operations}}
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type {{classname}}Controller struct {
+}
+
+{{#operation}}
+// {{httpMethod}} {{{basePathWithoutHost}}}{{{path}}}{{#summary}}
+// {{{.}}}{{/summary}}
+{{#isDeprecated}}
+// Deprecated
+{{/isDeprecated}}
+func (api *{{classname}}Controller) {{nickname}}(c *gin.Context) {
+	writeProblem(c, http.StatusNotImplemented, "Operation {{nickname}} is not implemented", []ProblemError{
+		newProblemError("request", "{{{basePathWithoutHost}}}{{{path}}}", "not_implemented", "Replace {{classname}}Controller or pass a custom implementation through ApiHandleFunctions."),
+	})
+}
+
+{{/operation}}
+{{/operations}}

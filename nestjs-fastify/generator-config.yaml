@@ -1,0 +1,13 @@
+files:
+  openapi.mustache:
+    templateType: SupportingFiles
+    destinationFilename: api/openapi.yaml
+  module.mustache:
+    templateType: SupportingFiles
+    destinationFilename: app/index.ts
+  api.module.mustache:
+    templateType: SupportingFiles
+    destinationFilename: app/api.module.ts
+  api-implementations.mustache:
+    templateType: SupportingFiles
+    destinationFilename: app/api-implementations.ts

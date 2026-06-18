@@ -1,0 +1,52 @@
+# {{appName}}
+
+{{#appDescriptionWithNewLines}}
+{{{.}}}
+{{/appDescriptionWithNewLines}}
+
+## Overview
+
+- API version: {{appVersion}}
+{{^hideGenerationTimestamp}}
+- Build date: {{generatedDate}}
+{{/hideGenerationTimestamp}}
+- Generator version: {{generatorVersion}}
+
+This app was generated from an OpenAPI specification with the DON Go Gin server template.
+
+## Running the server
+
+```sh
+go mod tidy
+go run .
+```
+
+The API listens on port `1337` by default. Use `PORT` to override this:
+
+```sh
+PORT=8080 go run .
+```
+
+The generated app publishes:
+
+- `/openapi.yaml`
+{{#basePathWithoutHost}}
+- `{{{basePathWithoutHost}}}/openapi.yaml`
+{{/basePathWithoutHost}}
+- all paths from the OpenAPI specification
+
+Missing implementations return `501 application/problem+json`.
+
+## Implementing operations
+
+Create a type that implements one of the generated API interfaces and pass it to `NewRouter`:
+
+```go
+router := openapi.NewRouter(openapi.ApiHandleFunctions{
+	// PetAPI: myPetController,
+})
+```
+
+The generated `*Controller` types are deliberately stubbed. Replace them or pass your own implementation through `ApiHandleFunctions`.
+
+If an operation has multiple OpenAPI tags, OpenAPI Generator may emit it through multiple API groups. The router registers the first method/path combination and skips later duplicates so the generated app remains startable.
