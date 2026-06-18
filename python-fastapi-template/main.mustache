@@ -1,0 +1,94 @@
+# coding: utf-8
+
+{{>partial_header}}
+
+
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+{{#apiInfo}}
+{{#apis}}
+from {{apiPackage}}.{{classFilename}} import router as {{classname}}Router
+{{/apis}}
+{{/apiInfo}}
+
+app = FastAPI(
+    title="{{appName}}",
+    description="{{appDescription}}",
+    version="{{appVersion}}",
+)
+
+
+def problem_response(
+    status_code: int,
+    title: str,
+    detail: str,
+    problem_type: str = "about:blank",
+    extra: dict | None = None,
+) -> JSONResponse:
+    body = {
+        "type": problem_type,
+        "title": title,
+        "status": status_code,
+        "detail": detail,
+    }
+    if extra:
+        body.update(extra)
+    return JSONResponse(
+        status_code=status_code,
+        content=body,
+        media_type="application/problem+json",
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    invalid_params = [
+        {
+            "name": ".".join(str(part) for part in error["loc"]),
+            "reason": error["msg"],
+        }
+        for error in exc.errors()
+    ]
+    return problem_response(
+        status_code=400,
+        title="Bad Request",
+        detail="Request validation failed.",
+        extra={"invalidParams": invalid_params},
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, str) else "HTTP error."
+    return problem_response(
+        status_code=exc.status_code,
+        title=detail,
+        detail=detail,
+    )
+
+
+@app.get("/openapi.yaml", include_in_schema=False)
+async def openapi_yaml() -> Response:
+    openapi_path = Path(__file__).resolve().parents[2] / "openapi.yaml"
+    return Response(
+        content=openapi_path.read_text(encoding="utf-8"),
+        media_type="application/yaml",
+    )
+
+
+{{#apiInfo}}
+{{#apis}}
+app.include_router({{classname}}Router)
+{{/apis}}
+{{/apiInfo}}

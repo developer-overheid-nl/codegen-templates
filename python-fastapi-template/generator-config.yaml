@@ -1,0 +1,7 @@
+sourceFolder: src
+serverPort: 1337
+fastapiImplementationPackage: impl
+disallowAdditionalPropertiesIfNotPresent: false
+ensureUniqueParams: true
+sortParamsByRequiredFlag: true
+sortModelPropertiesByRequiredFlag: true

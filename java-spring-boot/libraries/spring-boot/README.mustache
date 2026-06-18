@@ -1,0 +1,64 @@
+# {{artifactId}}
+
+{{#appDescriptionWithNewLines}}
+{{{.}}}
+{{/appDescriptionWithNewLines}}
+
+## Overview
+
+- API version: {{appVersion}}
+- Generator version: {{generatorVersion}}
+
+This app was generated from an OpenAPI specification with the DON Java Spring Boot template.
+
+## Running the server
+
+```sh
+./mvnw spring-boot:run
+```
+
+If no Maven wrapper is generated, use:
+
+```sh
+mvn spring-boot:run
+```
+
+The API listens on port `{{serverPort}}` by default. Override it with:
+
+```sh
+SERVER_PORT=8080 mvn spring-boot:run
+```
+
+The generated app publishes:
+
+- `/openapi.yaml` for the source OpenAPI contract used during generation
+- `/openapi.json` for Springdoc's runtime OpenAPI document
+- `/swagger-ui.html` when Swagger UI is enabled
+- all paths from the OpenAPI specification
+
+Missing delegate implementations return `501 application/problem+json`.
+
+## Implementing operations
+
+The generated controllers use the delegate pattern. Create a Spring service that implements a generated `*Delegate` interface:
+
+```java
+@Service
+public class ToolsApiService implements ToolsApiDelegate {
+    // implement operations here
+}
+```
+
+The generated fallback delegates remain in place until a matching Spring bean is available.
+
+## Request validation
+
+The template enables Bean Validation generation from the OpenAPI contract. Generated controllers and models include validation annotations for path parameters, query parameters and request bodies where OpenAPI Generator can map OAS constraints to Java validation annotations.
+
+Validate the source OAS with the DON Checker before generation:
+
+```sh
+npx @developer-overheid-nl/don-checker@latest validate \
+  --ruleset adr-21 \
+  --input openapi.bundled.json
+```

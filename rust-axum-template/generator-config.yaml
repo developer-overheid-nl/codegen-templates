@@ -1,0 +1,8 @@
+additionalProperties:
+  packageName: generated-api-rust
+  packageVersion: 1.0.0
+  hideGenerationTimestamp: true
+files:
+  openapi.mustache:
+    templateType: SupportingFiles
+    destinationFilename: openapi.yaml

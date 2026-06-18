@@ -1,0 +1,25 @@
+/// Setup API Server.
+pub fn new<I, A, E{{#havingAuthMethods}}, C{{/havingAuthMethods}}>(api_impl: I) -> Router
+where
+    I: AsRef<A> + Clone + Send + Sync + 'static,
+    A: {{#basicAnalytic}}apis::EventDispatcher + {{/basicAnalytic}}{{#apiInfo}}{{#apis}}{{#operations}}apis::{{classFilename}}::{{classnamePascalCase}}<E{{#havingAuthMethod}}, Claims = C{{/havingAuthMethod}}>{{#havingAuthMethod}}{{#basicAuthorization}} + apis::{{classFilename}}::{{classnamePascalCase}}Authorization<Claims = C>{{/basicAuthorization}}{{/havingAuthMethod}} + {{/operations}}{{/apis}}{{/apiInfo}}{{#authMethods}}{{#isApiKey}}{{#isKeyInCookie}}apis::CookieAuthentication<Claims = C> + {{/isKeyInCookie}}{{#isKeyInHeader}}apis::ApiKeyAuthHeader<Claims = C> + {{/isKeyInHeader}}{{/isApiKey}}{{#isBasic}}apis::ApiAuthBasic<Claims = C> + {{/isBasic}}{{/authMethods}}Send + Sync + 'static,
+    E: std::fmt::Debug + Send + Sync + 'static,
+    {{#havingAuthMethods}}C: Send + Sync + 'static,{{/havingAuthMethods}}
+{
+    Router::new()
+        .route("/openapi.yaml", get(openapi_yaml))
+        {{#pathMethodOps}}
+        .route("{{{basePathWithoutHost}}}{{{path}}}",
+            {{#methodOperations}}{{{method}}}({{{operationID}}}::<I, A, E{{#vendorExtensions}}{{#havingAuthMethod}}, C{{/havingAuthMethod}}{{/vendorExtensions}}>){{^-last}}.{{/-last}}{{/methodOperations}}
+        )
+        {{/pathMethodOps}}
+        .with_state(api_impl)
+}
+
+async fn openapi_yaml() -> Result<Response, StatusCode> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/yaml"))
+        .body(Body::from(include_str!("../../openapi.yaml")))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}

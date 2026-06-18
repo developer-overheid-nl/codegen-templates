@@ -1,0 +1,75 @@
+# {{appName}} FastAPI Server
+
+Deze server is gegenereerd uit een gebundelde OpenAPI-specificatie met de
+`python-fastapi-template`.
+
+- API-versie: {{appVersion}}
+{{^hideGenerationTimestamp}}
+- Generatiedatum: {{generatedDate}}
+{{/hideGenerationTimestamp}}
+- OpenAPI Generator: {{generatorVersion}}
+
+## Vereisten
+
+- Python >= {{{generatorLanguageVersion}}}
+- Een OAS die vooraf is gebundeld en gevalideerd.
+
+## Starten
+
+Installeer de dependencies en start de server vanuit de root van deze
+gegenereerde applicatie:
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+PYTHONPATH=src uvicorn {{packageName}}.main:app --host 0.0.0.0 --port {{serverPort}}
+```
+
+De server publiceert:
+
+- `/openapi.yaml` voor het broncontract waarmee de app is gegenereerd;
+- `/openapi.json` voor FastAPI's runtime OpenAPI-document;
+- `/docs` voor Swagger UI;
+- alle paden uit de OpenAPI-specificatie.
+
+## Implementaties
+
+OpenAPI Generator maakt per API-groep een `Base*` class. Voeg je implementatie
+toe in `src/{{packageName}}/impl/` door van de juiste base class te erven:
+
+```python
+from {{packageName}}.apis.example_api_base import BaseExampleApi
+
+
+class ExampleApiImpl(BaseExampleApi):
+    async def get_example(self):
+        return {"status": "ok"}
+```
+
+Zonder geregistreerde implementatie geeft de gegenereerde router standaard
+`501 application/problem+json` terug.
+
+## Validatie
+
+FastAPI en Pydantic valideren path-, query-, header- en bodyparameters op basis
+van de gegenereerde types en constraints. Request-validatiefouten worden als
+`400 application/problem+json` teruggegeven.
+
+Valideer het broncontract daarnaast in de design-first workflow voordat je code
+genereert:
+
+```sh
+npx @developer-overheid-nl/don-checker@latest validate \
+  --ruleset adr-21 \
+  --input openapi.bundled.json
+```
+
+## Tests
+
+```sh
+pip install pytest
+PYTHONPATH=src pytest tests
+```
+
+Status: deze Python-template is nog niet getest.

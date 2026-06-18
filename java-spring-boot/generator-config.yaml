@@ -1,0 +1,16 @@
+additionalProperties:
+  library: spring-boot
+  useSpringBoot3: true
+  delegatePattern: true
+  useTags: true
+  useBeanValidation: true
+  performBeanValidation: true
+  useResponseEntity: true
+  documentationProvider: springdoc
+  useSwaggerUI: true
+  hideGenerationTimestamp: true
+  serverPort: 1337
+files:
+  openapi.mustache:
+    templateType: SupportingFiles
+    destinationFilename: src/main/resources/static/openapi.yaml

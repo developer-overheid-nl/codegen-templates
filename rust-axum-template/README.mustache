@@ -1,0 +1,66 @@
+# Rust API for {{{packageName}}}
+
+{{#appDescriptionWithNewLines}}
+{{{.}}}
+{{/appDescriptionWithNewLines}}
+
+## Overview
+
+- API version: {{{appVersion}}}
+- Generator version: {{generatorVersion}}
+
+This crate was generated from an OpenAPI specification with the DON Rust Axum template.
+
+Status: this Rust template is not fully tested in a real API application yet.
+
+## Running checks
+
+```sh
+cargo test
+```
+
+The generated crate contains:
+
+- Rust data types for OpenAPI schemas
+- API traits per operation group
+- an Axum router that dispatches requests to your trait implementation
+- generated request validation for path, query and body parameters where OpenAPI Generator can map OAS constraints to Rust validators
+- `/openapi.yaml` for the source OpenAPI contract used during generation
+
+## Implementing operations
+
+Implement the generated API traits and pass your implementation to the generated router:
+
+```rust
+use std::sync::Arc;
+use async_trait::async_trait;
+use tokio::net::TcpListener;
+
+#[derive(Clone)]
+struct ApiImpl;
+
+impl AsRef<ApiImpl> for ApiImpl {
+    fn as_ref(&self) -> &ApiImpl {
+        self
+    }
+}
+
+impl {{{externCrateName}}}::apis::ErrorHandler for ApiImpl {}
+
+// Implement the generated traits under {{{externCrateName}}}::apis here.
+
+#[tokio::main]
+async fn main() {
+    let app = {{{externCrateName}}}::server::new(ApiImpl);
+    let listener = TcpListener::bind("0.0.0.0:1337").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
+For OAS validation, run the DON Checker before generation:
+
+```sh
+npx @developer-overheid-nl/don-checker@latest validate \
+  --ruleset adr-21 \
+  --input openapi.bundled.json
+```

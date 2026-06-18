@@ -1,0 +1,35 @@
+{{^reactive}}
+{{#useResponseEntity}}
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        ResponseEntity response = ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+            .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+            .body(Map.of(
+                "title", "Operation {{operationId}} is not implemented",
+                "status", 501,
+                "errors", List.of(Map.of(
+                    "in", "request",
+                    "location", "{{httpMethod}} {{{path}}}",
+                    "code", "not_implemented",
+                    "detail", "Provide a Spring service that implements {{classname}}Delegate to implement this operation."
+                ))
+            ));
+        return response;
+{{/useResponseEntity}}
+{{^useResponseEntity}}
+        throw new IllegalArgumentException("Operation {{operationId}} is not implemented");
+{{/useResponseEntity}}
+{{/reactive}}
+{{#reactive}}
+{{^vendorExtensions.x-sse}}
+{{#includeHttpRequestContext}}
+        exchange.getResponse().setStatusCode(HttpStatus.NOT_IMPLEMENTED);
+{{/includeHttpRequestContext}}
+        return Mono.empty();
+{{/vendorExtensions.x-sse}}
+{{#vendorExtensions.x-sse}}
+{{#includeHttpRequestContext}}
+        exchange.getResponse().setStatusCode(HttpStatus.NOT_IMPLEMENTED);
+{{/includeHttpRequestContext}}
+        return Flux.empty();
+{{/vendorExtensions.x-sse}}
+{{/reactive}}
