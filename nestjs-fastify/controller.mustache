@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { Cookies, Headers } from '../decorators';
 import { {{classname}} } from '../{{apiPackage}}';
 {{#tsImports.0}}
-import { {{#tsImports}}{{classname}}, {{/tsImports}} } from '../{{modelPackage}}';
+import { {{#tsImports}}{{classname}}{{^-last}}, {{/-last}}{{/tsImports}} } from '../{{modelPackage}}';
 {{/tsImports.0}}
 
 @Controller()
