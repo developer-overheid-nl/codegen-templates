@@ -1,6 +1,6 @@
 additionalProperties:
   library: spring-boot
-  useSpringBoot3: true
+  useSpringBoot4: true
   delegatePattern: true
   useTags: true
   useBeanValidation: true
