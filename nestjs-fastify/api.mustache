@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Observable } from 'rxjs';
 {{#tsImports.0}}
 import { {{#tsImports}}{{classname}}{{^-last}}, {{/-last}}{{/tsImports}} } from '../{{modelPackage}}';
@@ -22,10 +22,10 @@ export abstract class {{classname}} {
 {{#operations}}
 {{#operation}}
 {{#useSingleRequestParameter}}
-  abstract {{operationId}}({{operationId}}RequestParams: {{#lambda.pascalcase}}{{operationId}}{{/lambda.pascalcase}}RequestParams, request: Request, reply: FastifyReply): {{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}} | Promise<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> | Observable<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}>;
+  abstract {{operationId}}({{operationId}}RequestParams: {{#lambda.pascalcase}}{{operationId}}{{/lambda.pascalcase}}RequestParams, request: FastifyRequest, reply: FastifyReply): {{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}} | Promise<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> | Observable<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}>;
 {{/useSingleRequestParameter}}
 {{^useSingleRequestParameter}}
-  abstract {{operationId}}({{#allParams}}{{paramName}}: {{{dataType}}}{{#isNullable}} | null{{/isNullable}}{{^required}} | undefined{{/required}}, {{/allParams}}request: Request, reply: FastifyReply): {{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}} | Promise<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> | Observable<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}>;
+  abstract {{operationId}}({{#allParams}}{{paramName}}: {{{dataType}}}{{#isNullable}} | null{{/isNullable}}{{^required}} | undefined{{/required}}, {{/allParams}}request: FastifyRequest, reply: FastifyReply): {{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}} | Promise<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> | Observable<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}>;
 {{/useSingleRequestParameter}}
 {{/operation}}
 {{/operations}}

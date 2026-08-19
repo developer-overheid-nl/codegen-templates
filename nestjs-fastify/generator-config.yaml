@@ -11,3 +11,9 @@ files:
   api-implementations.mustache:
     templateType: SupportingFiles
     destinationFilename: app/api-implementations.ts
+  implementation.mustache:
+    templateType: SupportingFiles
+    destinationFilename: implementation/index.ts
+  logging.mustache:
+    templateType: SupportingFiles
+    destinationFilename: app/logging.ts

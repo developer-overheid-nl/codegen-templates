@@ -93,8 +93,13 @@ npx @openapitools/openapi-generator-cli generate \
   -o ./generated-api-nestjs \
   -t ./nestjs-fastify \
   -c ./nestjs-fastify/generator-config.yaml \
-  --skip-validate-spec \
   --additional-properties=npmName=generated-api-nestjs,npmVersion=1.0.0,nestVersion=11.0.0,rxjsVersion=7.8.2,tsVersion=5.9.3,nodeVersion=22.0.0
+```
+
+Kopieer de gebundelde OAS na generatie naar de runtime-locatie:
+
+```sh
+cp openapi.bundled.json ./generated-api-nestjs/api/openapi.yaml
 ```
 
 Start:
@@ -118,22 +123,24 @@ OPENAPI_VALIDATE_RESPONSES=true npm run dev
 ```
 
 De NestJS-template genereert abstracte API classes en controllers. Koppel echte
-implementaties via `ApiModule.forRoot`:
+implementaties in het projectbestand `implementation/index.ts`:
 
 ```ts
-@Module({
-  imports: [
-    ApiModule.forRoot({
-      apiImplementations: {
-        toolsApi: ToolsService,
-      },
-    }),
-  ],
-})
-export class AppModule {}
+export const apiImplementations = {
+  toolsApi: ToolsService,
+};
 ```
 
-Ontbrekende implementaties geven standaard `501 application/problem+json`.
+De gegenereerde bootstrap leest deze implementaties automatisch in. De runtime
+schrijft gestructureerde Pino-logs met een veilige request-id en precies één
+completion-log per request. Ontbrekende implementaties geven standaard
+`501 application/problem+json`.
+
+De integratietest genereert, compileert en start een minimale API:
+
+```sh
+node --test test/nestjs-fastify-template.test.mjs
+```
 
 ## Go Gin
 

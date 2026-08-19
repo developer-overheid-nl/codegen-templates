@@ -1,0 +1,113 @@
+import { randomUUID } from "node:crypto";
+import type { LoggerService } from "@nestjs/common";
+import { LogController } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance, FastifyRequest, FastifyServerOptions } from "fastify";
+
+const requestIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
+
+const requestIdFromHeader = (header: string | string[] | undefined): string => {
+  const candidate = Array.isArray(header) ? header[0] : header;
+  return candidate && requestIdPattern.test(candidate) ? candidate : randomUUID();
+};
+
+const pathname = (request: FastifyRequest): string => new URL(request.url, "http://localhost").pathname;
+
+const safeMessage = (message: unknown): string => {
+  if (message instanceof Error) return message.name;
+  if (typeof message !== "string") return typeof message;
+  return message.replace(/https?:\/\/[^\s]+/gi, "[url]").slice(0, 1024);
+};
+
+const contextFrom = (optionalParams: unknown[]): string | undefined => {
+  const last = optionalParams.at(-1);
+  return typeof last === "string" ? last : undefined;
+};
+
+export const createFastifyOptions = (): FastifyServerOptions => ({
+  logController: new LogController({ disableRequestLogging: true }),
+  genReqId: (request) => requestIdFromHeader(request.headers["x-request-id"]),
+  logger: {
+    level: process.env.LOG_LEVEL ?? "info",
+    base: {
+      service: process.env.SERVICE_NAME ?? "{{npmName}}",
+      version: "{{npmVersion}}",
+      environment: process.env.NODE_ENV ?? "development",
+    },
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "req.headers.x-api-key",
+        "request.headers.authorization",
+        "request.headers.cookie",
+        "request.headers.x-api-key",
+        "headers.authorization",
+        "headers.cookie",
+        "headers.x-api-key",
+        "body",
+        "query",
+      ],
+      censor: "[Redacted]",
+    },
+  },
+});
+
+export const registerRequestLogging = (fastify: FastifyInstance): void => {
+  const completed = new WeakSet<FastifyRequest>();
+  const started = new WeakMap<FastifyRequest, bigint>();
+
+  const finish = (request: FastifyRequest, statusCode: number, event: string): void => {
+    if (completed.has(request)) return;
+    completed.add(request);
+    const record = {
+      event,
+      requestId: request.id,
+      method: request.method,
+      route: request.routeOptions?.url ?? pathname(request),
+      statusCode,
+      durationMs: Number(process.hrtime.bigint() - (started.get(request) ?? process.hrtime.bigint())) / 1_000_000,
+    };
+    if (statusCode >= 500) request.log.error(record, event);
+    else if (statusCode >= 400) request.log.warn(record, event);
+    else request.log.info(record, event);
+  };
+
+  fastify.addHook("onRequest", async (request, reply) => {
+    started.set(request, process.hrtime.bigint());
+    reply.header("X-Request-ID", request.id);
+  });
+  fastify.addHook("onResponse", async (request, reply) => {
+    finish(request, reply.statusCode, "http.request.completed");
+  });
+  fastify.addHook("onRequestAbort", async (request) => {
+    finish(request, 499, "http.request.aborted");
+  });
+};
+
+export class NestPinoLogger implements LoggerService {
+  constructor(private readonly logger: FastifyBaseLogger) {}
+
+  log(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.info({ event: "application.log", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+
+  error(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.error({ event: "application.error", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+
+  warn(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.warn({ event: "application.warn", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+
+  debug(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.debug({ event: "application.debug", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+
+  verbose(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.trace({ event: "application.verbose", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+
+  fatal(message: unknown, ...optionalParams: unknown[]): void {
+    this.logger.fatal({ event: "application.fatal", context: contextFrom(optionalParams), message: safeMessage(message) });
+  }
+}
