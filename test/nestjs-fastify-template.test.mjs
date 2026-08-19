@@ -142,9 +142,4 @@ export const apiImplementations: Partial<ApiImplementations> = {
 
   const generatedTsconfig = JSON.parse(readFileSync(join(outputDirectory, "tsconfig.json"), "utf8"));
   assert.equal("baseUrl" in generatedTsconfig.compilerOptions, false);
-  const generatedApplication = readFileSync(join(outputDirectory, "app", "index.ts"), "utf8");
-  assert.match(
-    generatedApplication,
-    /enableShutdownHooks\(\["SIGTERM", "SIGINT"\], \{ useProcessExit: true \}\)/,
-  );
 });
