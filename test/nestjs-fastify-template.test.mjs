@@ -51,7 +51,7 @@ test("a generated app accepts an implementation and emits one safe completion lo
 
   writeFileSync(
     join(outputDirectory, "implementation", "index.ts"),
-    `import { Injectable } from "@nestjs/common";
+    `import { BadRequestException, Injectable } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ToolsApi } from "../api";
 import type { ApiImplementations } from "../app/api-implementations";
@@ -59,6 +59,7 @@ import type { ApiImplementations } from "../app/api-implementations";
 @Injectable()
 class ToolsService extends ToolsApi {
   getPing(message: string | undefined, _request: FastifyRequest, _reply: FastifyReply): string {
+    if (message === "fail") throw new BadRequestException("ping failed");
     return \`pong:\${message ?? ""}\`;
   }
 }
@@ -73,7 +74,8 @@ export const apiImplementations: Partial<ApiImplementations> = {
   run("npm", ["run", "typecheck"], outputDirectory);
   run("npm", ["run", "build"], outputDirectory);
 
-  const runner = `const { createApp } = require("./dist/app/index.js");
+  const runner = `process.env.OPENAPI_VALIDATE_RESPONSES = "true";
+const { createApp } = require("./dist/app/index.js");
 (async () => {
   const app = await createApp();
   await app.init();
@@ -87,6 +89,16 @@ export const apiImplementations: Partial<ApiImplementations> = {
     url: "/missing?token=never-reflect-this",
     headers: { "x-request-id": "missing-123" },
   });
+  const invalid = await app.getHttpAdapter().getInstance().inject({
+    method: "GET",
+    url: "/ping?message=",
+    headers: { "x-request-id": "invalid-123" },
+  });
+  const failed = await app.getHttpAdapter().getInstance().inject({
+    method: "GET",
+    url: "/ping?message=fail",
+    headers: { "x-request-id": "failed-123" },
+  });
   console.log("RESULT " + JSON.stringify({
     implemented: {
       statusCode: response.statusCode,
@@ -97,6 +109,18 @@ export const apiImplementations: Partial<ApiImplementations> = {
       statusCode: missing.statusCode,
       body: JSON.parse(missing.body),
       requestId: missing.headers["x-request-id"],
+    },
+    invalid: {
+      statusCode: invalid.statusCode,
+      contentType: invalid.headers["content-type"],
+      body: JSON.parse(invalid.body),
+      requestId: invalid.headers["x-request-id"],
+    },
+    failed: {
+      statusCode: failed.statusCode,
+      contentType: failed.headers["content-type"],
+      body: JSON.parse(failed.body),
+      requestId: failed.headers["x-request-id"],
     },
   }));
   await app.close();
@@ -119,6 +143,32 @@ export const apiImplementations: Partial<ApiImplementations> = {
       body: { title: "Cannot GET /missing", status: 404 },
       requestId: "missing-123",
     },
+    invalid: {
+      statusCode: 400,
+      contentType: "application/problem+json; charset=utf-8",
+      body: {
+        title: "Request validation failed",
+        status: 400,
+        errors: [
+          {
+            in: "query",
+            location: "message",
+            code: "minLength",
+            detail: "must NOT have fewer than 1 characters",
+          },
+        ],
+      },
+      requestId: "invalid-123",
+    },
+    failed: {
+      statusCode: 400,
+      contentType: "application/problem+json; charset=utf-8",
+      body: {
+        title: "ping failed",
+        status: 400,
+      },
+      requestId: "failed-123",
+    },
   });
 
   const logs = lines.flatMap((line) => {
@@ -129,12 +179,14 @@ export const apiImplementations: Partial<ApiImplementations> = {
     }
   });
   const completions = logs.filter((entry) => entry.event === "http.request.completed");
-  assert.equal(completions.length, 2);
+  assert.equal(completions.length, 4);
   assert.deepEqual(
     completions.map(({ requestId, route }) => ({ requestId, route })),
     [
       { requestId: "req-123", route: "/ping" },
       { requestId: "missing-123", route: "/missing" },
+      { requestId: "invalid-123", route: "/ping" },
+      { requestId: "failed-123", route: "/ping" },
     ],
   );
   assert.equal(JSON.stringify(completions).includes("supersecret"), false);
