@@ -1,0 +1,9 @@
+{{#hasImports}}
+import {
+  {{#imports}}
+  {{{.}}},
+  {{/imports}}
+} from './';
+
+{{/hasImports}}
+export type {{classname}} = {{#oneOf}}{{{.}}}{{^-last}} | {{/-last}}{{/oneOf}};
