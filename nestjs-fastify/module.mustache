@@ -667,6 +667,7 @@ export const createApp = async (): Promise<NestFastifyApplication> => {
 
 export const bootstrap = async (): Promise<NestFastifyApplication> => {
   const app = await createApp();
+  app.enableShutdownHooks(["SIGTERM", "SIGINT"], { useProcessExit: true });
   const port = parseInt10(process.env.PORT, 1338);
   const host = process.env.HOST ?? "0.0.0.0";
   await app.listen(port, host);
