@@ -21,7 +21,7 @@ const run = (command, args, cwd, capture = false) => {
   return result;
 };
 
-test("a generated app accepts an implementation and emits one safe completion log", { timeout: 120_000 }, () => {
+test("a generated app accepts an implementation and emits one safe completion log per request", { timeout: 120_000 }, () => {
   const outputDirectory = mkdtempSync(join(tmpdir(), "nestjs-fastify-template-test-"));
 
   run(
@@ -82,10 +82,22 @@ export const apiImplementations: Partial<ApiImplementations> = {
     url: "/ping?message=supersecret",
     headers: { "x-request-id": "req-123" },
   });
+  const missing = await app.getHttpAdapter().getInstance().inject({
+    method: "GET",
+    url: "/missing?token=never-reflect-this",
+    headers: { "x-request-id": "missing-123" },
+  });
   console.log("RESULT " + JSON.stringify({
-    statusCode: response.statusCode,
-    body: response.body,
-    requestId: response.headers["x-request-id"],
+    implemented: {
+      statusCode: response.statusCode,
+      body: response.body,
+      requestId: response.headers["x-request-id"],
+    },
+    missing: {
+      statusCode: missing.statusCode,
+      body: JSON.parse(missing.body),
+      requestId: missing.headers["x-request-id"],
+    },
   }));
   await app.close();
 })().catch((error) => {
@@ -97,9 +109,16 @@ export const apiImplementations: Partial<ApiImplementations> = {
   const resultLine = lines.find((line) => line.startsWith("RESULT "));
   assert.ok(resultLine);
   assert.deepEqual(JSON.parse(resultLine.slice(7)), {
-    statusCode: 200,
-    body: "pong:supersecret",
-    requestId: "req-123",
+    implemented: {
+      statusCode: 200,
+      body: "pong:supersecret",
+      requestId: "req-123",
+    },
+    missing: {
+      statusCode: 404,
+      body: { title: "Cannot GET /missing", status: 404 },
+      requestId: "missing-123",
+    },
   });
 
   const logs = lines.flatMap((line) => {
@@ -110,10 +129,16 @@ export const apiImplementations: Partial<ApiImplementations> = {
     }
   });
   const completions = logs.filter((entry) => entry.event === "http.request.completed");
-  assert.equal(completions.length, 1);
-  assert.equal(completions[0].requestId, "req-123");
-  assert.equal(completions[0].route, "/ping");
-  assert.equal(JSON.stringify(completions[0]).includes("supersecret"), false);
+  assert.equal(completions.length, 2);
+  assert.deepEqual(
+    completions.map(({ requestId, route }) => ({ requestId, route })),
+    [
+      { requestId: "req-123", route: "/ping" },
+      { requestId: "missing-123", route: "/missing" },
+    ],
+  );
+  assert.equal(JSON.stringify(completions).includes("supersecret"), false);
+  assert.equal(JSON.stringify(completions).includes("never-reflect-this"), false);
 
   const generatedTsconfig = JSON.parse(readFileSync(join(outputDirectory, "tsconfig.json"), "utf8"));
   assert.equal("baseUrl" in generatedTsconfig.compilerOptions, false);

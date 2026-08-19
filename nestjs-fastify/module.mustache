@@ -463,6 +463,7 @@ const chooseDeclaredResponseStatus = (operation: RuntimeOperation | undefined, s
 class ProblemDetailsFilter implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
     const context = host.switchToHttp();
+    const request = context.getRequest<RuntimeRequest>();
     const reply = context.getResponse();
     const status = error instanceof HttpException ? error.getStatus() : 500;
     const response = error instanceof HttpException ? error.getResponse() : undefined;
@@ -476,8 +477,10 @@ class ProblemDetailsFilter implements ExceptionFilter {
         : error instanceof Error
           ? error.message
           : statusText(status);
+    const requestPath = request.url.split("?")[0] ?? request.url;
+    const safeDetail = request.url === requestPath ? detail : detail.replace(request.url, requestPath);
 
-    reply.status(status).type("application/problem+json").send(toProblem(status, detail));
+    reply.status(status).type("application/problem+json").send(toProblem(status, safeDetail));
   }
 }
 
