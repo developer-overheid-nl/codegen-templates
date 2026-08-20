@@ -40,7 +40,7 @@ test("a generated app accepts an implementation and emits one safe completion lo
       templateDirectory,
       "-c",
       join(templateDirectory, "generator-config.yaml"),
-      "--additional-properties=npmName=ping-api,npmVersion=1.0.0,nestVersion=11.2.1,rxjsVersion=7.8.2,tsVersion=6.0.3,nodeVersion=22.0.0",
+      "--additional-properties=npmName=ping-api,npmVersion=1.0.0,logAppName=tools-api,nestVersion=11.2.1,rxjsVersion=7.8.2,tsVersion=6.0.3,nodeVersion=22.0.0",
     ],
     repositoryRoot,
   );
@@ -265,6 +265,7 @@ const { createApp } = require("./dist/app/index.js");
   assert.deepEqual(JSON.parse(startupLine.slice(8)), {
     status: 1,
     failure: {
+      app: "tools-api",
       event: "application.startup.failed",
       errorName: "Error",
       errorCode: "EADDRINUSE",
@@ -278,6 +279,9 @@ const { createApp } = require("./dist/app/index.js");
       return [];
     }
   });
+  assert.equal(logs.length > 0, true);
+  assert.equal(logs.every((entry) => entry.app === "tools-api"), true);
+  assert.equal(logs.some((entry) => "service" in entry), false);
   const completions = logs.filter((entry) =>
     ["http.request.completed", "http.request.aborted"].includes(entry.event),
   );
