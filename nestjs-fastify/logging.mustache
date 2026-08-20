@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { Readable, Transform } from "node:stream";
 import type { LoggerService } from "@nestjs/common";
 import { LogController } from "fastify";
-import type { FastifyBaseLogger, FastifyInstance, FastifyRequest, FastifyServerOptions } from "fastify";
+import type {
+  FastifyBaseLogger,
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+  FastifyServerOptions,
+} from "fastify";
 import pino, { type Logger, type LoggerOptions } from "pino";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -9,6 +16,14 @@ type LogLevel = "debug" | "info" | "warn" | "error";
 const appName = "{{#logAppName}}{{logAppName}}{{/logAppName}}{{^logAppName}}{{npmName}}{{/logAppName}}";
 const requestIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
+const logLevelLabels: Record<string, "DEBUG" | "INFO" | "WARN" | "ERROR"> = {
+  trace: "DEBUG",
+  debug: "DEBUG",
+  info: "INFO",
+  warn: "WARN",
+  error: "ERROR",
+  fatal: "ERROR",
+};
 
 const requestIdFromHeader = (header: string | string[] | undefined): string => {
   const candidate = Array.isArray(header) ? header[0] : header;
@@ -25,10 +40,38 @@ const parseLogLevel = (configuredLevel = process.env.LOG_LEVEL): LogLevel => {
 
 const pathname = (request: FastifyRequest): string => new URL(request.url, "http://localhost").pathname;
 
-const responseSize = (payload: unknown): number => {
+const responseSize = (payload: unknown): number | undefined => {
   if (typeof payload === "string") return Buffer.byteLength(payload);
   if (Buffer.isBuffer(payload) || payload instanceof Uint8Array) return payload.byteLength;
-  return 0;
+  return undefined;
+};
+
+const responseContentLength = (reply: FastifyReply): number | undefined => {
+  const header = reply.getHeader("content-length");
+  const candidate = Array.isArray(header) ? header[0] : header;
+  const value =
+    typeof candidate === "number"
+      ? candidate
+      : typeof candidate === "string"
+        ? Number.parseInt(candidate, 10)
+        : Number.NaN;
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+};
+
+const countStreamBytes = (
+  request: FastifyRequest,
+  payload: Readable,
+  responseBytes: WeakMap<FastifyRequest, number>,
+): Readable => {
+  const counter = new Transform({
+    transform(chunk, encoding, callback) {
+      const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+      responseBytes.set(request, (responseBytes.get(request) ?? 0) + bytes);
+      callback(null, chunk);
+    },
+  });
+  payload.on("error", (error) => counter.destroy(error));
+  return payload.pipe(counter);
 };
 
 const safeMessage = (message: unknown): string => {
@@ -49,7 +92,7 @@ export const createLoggerOptions = (configuredLevel = process.env.LOG_LEVEL): Lo
   },
   timestamp: pino.stdTimeFunctions.isoTime,
   formatters: {
-    level: (label) => ({ level: label.toUpperCase() }),
+    level: (label) => ({ level: logLevelLabels[label] ?? "INFO" }),
   },
   mixin: () => ({
     component: "application",
@@ -87,7 +130,12 @@ export const registerRequestLogging = (fastify: FastifyInstance): void => {
   const started = new WeakMap<FastifyRequest, bigint>();
   const responseBytes = new WeakMap<FastifyRequest, number>();
 
-  const finish = (request: FastifyRequest, statusCode: number, message: string): void => {
+  const finish = (
+    request: FastifyRequest,
+    reply: FastifyReply | undefined,
+    statusCode: number,
+    message: string,
+  ): void => {
     if (completed.has(request)) return;
     completed.add(request);
     const startedAt = started.get(request);
@@ -99,7 +147,7 @@ export const registerRequestLogging = (fastify: FastifyInstance): void => {
       path: pathname(request),
       status_code: statusCode,
       duration_ms: startedAt ? Math.floor(Number(process.hrtime.bigint() - startedAt) / 1_000_000) : 0,
-      response_bytes: responseBytes.get(request) ?? 0,
+      response_bytes: (reply && responseContentLength(reply)) ?? responseBytes.get(request) ?? 0,
     };
     if (statusCode >= 500) request.log.error(record, message);
     else request.log.info(record, message);
@@ -110,14 +158,16 @@ export const registerRequestLogging = (fastify: FastifyInstance): void => {
     reply.header("X-Request-ID", request.id);
   });
   fastify.addHook("onSend", async (request, _reply, payload) => {
-    responseBytes.set(request, responseSize(payload));
+    if (payload instanceof Readable) return countStreamBytes(request, payload, responseBytes);
+    const bytes = responseSize(payload);
+    if (bytes !== undefined) responseBytes.set(request, bytes);
     return payload;
   });
   fastify.addHook("onResponse", async (request, reply) => {
-    finish(request, reply.statusCode, "HTTP request completed");
+    finish(request, reply, reply.statusCode, "HTTP request completed");
   });
   fastify.addHook("onRequestAbort", async (request) => {
-    finish(request, 499, "HTTP request aborted");
+    finish(request, undefined, 499, "HTTP request aborted");
   });
 };
 

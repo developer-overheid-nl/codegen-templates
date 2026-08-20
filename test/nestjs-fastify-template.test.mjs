@@ -84,11 +84,22 @@ export const apiImplementations: Partial<ApiImplementations> = {
   const runner = `process.env.OPENAPI_VALIDATE_RESPONSES = "true";
 const { spawnSync } = require("node:child_process");
 const { createConnection, createServer } = require("node:net");
+const { Readable } = require("node:stream");
 const { createApp } = require("./dist/app/index.js");
 (async () => {
   const app = await createApp();
   const fastify = app.getHttpAdapter().getInstance();
+  const configuredLevel = fastify.log.level;
+  fastify.log.level = "trace";
+  fastify.log.trace({ component: "application", operation: "log" }, "direct trace");
+  fastify.log.fatal({ component: "application", operation: "log" }, "direct fatal");
+  fastify.log.level = configuredLevel;
+  fastify.addHook("onSend", async (request, _reply, payload) =>
+    request.url.startsWith("/rewritten") ? "rewritten-response" : payload,
+  );
   fastify.post("/abort-test", async () => ({ ok: true }));
+  fastify.get("/rewritten", async () => "x");
+  fastify.get("/stream", async () => Readable.from(["stream-body"]));
   await app.listen(0, "127.0.0.1");
   const response = await fastify.inject({
     method: "GET",
@@ -125,6 +136,16 @@ const { createApp } = require("./dist/app/index.js");
     method: "GET",
     url: "/ping?message=explode",
     headers: { "x-request-id": "exploded-123" },
+  });
+  const rewritten = await fastify.inject({
+    method: "GET",
+    url: "/rewritten",
+    headers: { "x-request-id": "rewritten-123" },
+  });
+  const streamed = await fastify.inject({
+    method: "GET",
+    url: "/stream",
+    headers: { "x-request-id": "stream-123" },
   });
   const address = app.getHttpServer().address();
   await new Promise((resolve) => {
@@ -177,6 +198,16 @@ const { createApp } = require("./dist/app/index.js");
       contentType: exploded.headers["content-type"],
       body: JSON.parse(exploded.body),
       requestId: exploded.headers["x-request-id"],
+    },
+    rewritten: {
+      statusCode: rewritten.statusCode,
+      body: rewritten.body,
+      requestId: rewritten.headers["x-request-id"],
+    },
+    streamed: {
+      statusCode: streamed.statusCode,
+      body: streamed.body,
+      requestId: streamed.headers["x-request-id"],
     },
   }));
   await app.close();
@@ -261,6 +292,16 @@ const { createApp } = require("./dist/app/index.js");
       },
       requestId: "exploded-123",
     },
+    rewritten: {
+      statusCode: 200,
+      body: "rewritten-response",
+      requestId: "rewritten-123",
+    },
+    streamed: {
+      statusCode: 200,
+      body: "stream-body",
+      requestId: "stream-123",
+    },
   });
   const startupResult = JSON.parse(startupLine.slice(8));
   assert.equal(startupResult.status, 1);
@@ -296,8 +337,10 @@ const { createApp } = require("./dist/app/index.js");
     assert.equal("environment" in entry, false);
     assert.equal("event" in entry, false);
   }
+  assert.equal(logs.find((entry) => entry.msg === "direct trace")?.level, "DEBUG");
+  assert.equal(logs.find((entry) => entry.msg === "direct fatal")?.level, "ERROR");
   const completions = logs.filter((entry) => entry.component === "http_server" && entry.operation === "request");
-  assert.equal(completions.length, 7);
+  assert.equal(completions.length, 9);
   assert.deepEqual(
     completions.map(({ level, msg, request_id, route, path, status_code }) => ({
       level,
@@ -314,9 +357,13 @@ const { createApp } = require("./dist/app/index.js");
       { level: "INFO", msg: "HTTP request completed", request_id: "failed-123", route: "/ping", path: "/ping", status_code: 400 },
       { level: "INFO", msg: "HTTP request completed", request_id: "body-123", route: "/missing", path: "/missing", status_code: 404 },
       { level: "ERROR", msg: "HTTP request completed", request_id: "exploded-123", route: "/ping", path: "/ping", status_code: 500 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "rewritten-123", route: "/rewritten", path: "/rewritten", status_code: 200 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "stream-123", route: "/stream", path: "/stream", status_code: 200 },
       { level: "INFO", msg: "HTTP request aborted", request_id: "aborted-123", route: "/abort-test", path: "/abort-test", status_code: 499 },
     ],
   );
+  assert.equal(completions.find((entry) => entry.request_id === "rewritten-123")?.response_bytes, 18);
+  assert.equal(completions.find((entry) => entry.request_id === "stream-123")?.response_bytes, 11);
   for (const completion of completions) {
     assert.equal(Number.isInteger(completion.duration_ms), true);
     assert.equal(completion.duration_ms >= 0, true);

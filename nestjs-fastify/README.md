@@ -223,4 +223,5 @@ Iedere logregel is één JSON-object met een ISO-timestamp, een
 hoofdletter-loglevel en de vaste velden `msg`, `app`, `component` en
 `operation`. HTTP-logs gebruiken snake_case-velden, bevatten geen querystring
 in `path`, hebben een veilige `request_id` en behandelen alleen `5xx` als
-`ERROR`.
+`ERROR`. `LOG_LEVEL` accepteert uitsluitend `debug`, `info`, `warn` en
+`error`; een andere waarde stopt de startup met een contractconforme foutlog.
