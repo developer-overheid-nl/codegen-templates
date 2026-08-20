@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Readable, Transform } from "node:stream";
+import { pipeline, Readable, Transform } from "node:stream";
 import type { LoggerService } from "@nestjs/common";
 import { LogController } from "fastify";
 import type {
@@ -70,8 +70,8 @@ const countStreamBytes = (
       callback(null, chunk);
     },
   });
-  payload.on("error", (error) => counter.destroy(error));
-  return payload.pipe(counter);
+  pipeline(payload, counter, () => undefined);
+  return counter;
 };
 
 const safeMessage = (message: unknown): string => {

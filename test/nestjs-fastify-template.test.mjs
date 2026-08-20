@@ -81,8 +81,9 @@ export const apiImplementations: Partial<ApiImplementations> = {
   run("npm", ["run", "typecheck"], outputDirectory);
   run("npm", ["run", "build"], outputDirectory);
 
-  const runner = `process.env.OPENAPI_VALIDATE_RESPONSES = "true";
+const runner = `process.env.OPENAPI_VALIDATE_RESPONSES = "true";
 const { spawnSync } = require("node:child_process");
+const { get } = require("node:http");
 const { createConnection, createServer } = require("node:net");
 const { Readable } = require("node:stream");
 const { createApp } = require("./dist/app/index.js");
@@ -100,6 +101,16 @@ const { createApp } = require("./dist/app/index.js");
   fastify.post("/abort-test", async () => ({ ok: true }));
   fastify.get("/rewritten", async () => "x");
   fastify.get("/stream", async () => Readable.from(["stream-body"]));
+  let sentDisconnectChunk = false;
+  const disconnectSource = new Readable({
+    read() {
+      if (!sentDisconnectChunk) {
+        sentDisconnectChunk = true;
+        this.push("disconnect-chunk");
+      }
+    },
+  });
+  fastify.get("/disconnect-stream", async () => disconnectSource);
   await app.listen(0, "127.0.0.1");
   const response = await fastify.inject({
     method: "GET",
@@ -165,6 +176,21 @@ const { createApp } = require("./dist/app/index.js");
     socket.on("error", resolve);
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve, reject) => {
+    const request = get({
+      host: "127.0.0.1",
+      port: address.port,
+      path: "/disconnect-stream",
+      headers: { "x-request-id": "disconnect-123" },
+    }, (response) => {
+      response.once("data", () => response.destroy());
+      response.once("close", resolve);
+    });
+    request.once("error", reject);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const disconnectSourceDestroyed = disconnectSource.destroyed;
+  disconnectSource.destroy();
   console.log("RESULT " + JSON.stringify({
     implemented: {
       statusCode: response.statusCode,
@@ -209,6 +235,7 @@ const { createApp } = require("./dist/app/index.js");
       body: streamed.body,
       requestId: streamed.headers["x-request-id"],
     },
+    disconnectSourceDestroyed,
   }));
   await app.close();
   const blocker = createServer();
@@ -302,6 +329,7 @@ const { createApp } = require("./dist/app/index.js");
       body: "stream-body",
       requestId: "stream-123",
     },
+    disconnectSourceDestroyed: true,
   });
   const startupResult = JSON.parse(startupLine.slice(8));
   assert.equal(startupResult.status, 1);
@@ -340,7 +368,7 @@ const { createApp } = require("./dist/app/index.js");
   assert.equal(logs.find((entry) => entry.msg === "direct trace")?.level, "DEBUG");
   assert.equal(logs.find((entry) => entry.msg === "direct fatal")?.level, "ERROR");
   const completions = logs.filter((entry) => entry.component === "http_server" && entry.operation === "request");
-  assert.equal(completions.length, 9);
+  assert.equal(completions.length, 10);
   assert.deepEqual(
     completions.map(({ level, msg, request_id, route, path, status_code }) => ({
       level,
@@ -360,6 +388,7 @@ const { createApp } = require("./dist/app/index.js");
       { level: "INFO", msg: "HTTP request completed", request_id: "rewritten-123", route: "/rewritten", path: "/rewritten", status_code: 200 },
       { level: "INFO", msg: "HTTP request completed", request_id: "stream-123", route: "/stream", path: "/stream", status_code: 200 },
       { level: "INFO", msg: "HTTP request aborted", request_id: "aborted-123", route: "/abort-test", path: "/abort-test", status_code: 499 },
+      { level: "INFO", msg: "HTTP request aborted", request_id: "disconnect-123", route: "/disconnect-stream", path: "/disconnect-stream", status_code: 499 },
     ],
   );
   assert.equal(completions.find((entry) => entry.request_id === "rewritten-123")?.response_bytes, 18);
