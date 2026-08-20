@@ -11,7 +11,7 @@ import type { Operation, Request as OpenAPIRequest } from "openapi-backend";
 import type Ajv from "ajv";
 import { apiImplementations } from "../implementation";
 import { ApiModule } from "./api.module";
-import { createFastifyOptions, NestPinoLogger, registerRequestLogging } from "./logging";
+import { createApplicationLogger, createFastifyOptions, NestPinoLogger, registerRequestLogging } from "./logging";
 
 const yaml = require("js-yaml") as { load(input: string): unknown };
 
@@ -674,7 +674,11 @@ export const bootstrap = async (): Promise<NestFastifyApplication> => {
   const port = parseInt10(process.env.PORT, 1338);
   const host = process.env.HOST ?? "0.0.0.0";
   await app.listen(port, host);
-  app.getHttpAdapter().getInstance().log.info({ event: "application.listening", host, port });
+  const address = host === "0.0.0.0" ? ":" + port : host + ":" + port;
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .log.info({ component: "http_server", operation: "listen", address }, "server started");
   return app;
 };
 
@@ -685,8 +689,14 @@ if (require.main === module) {
       typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
         ? error.code
         : undefined;
-    process.stderr.write(
-      `${JSON.stringify({ app: "{{#logAppName}}{{logAppName}}{{/logAppName}}{{^logAppName}}{{npmName}}{{/logAppName}}", event: "application.startup.failed", errorName, errorCode })}\n`,
+    const logger = createApplicationLogger("info");
+    logger.error(
+      {
+        component: "http_server",
+        operation: "listen",
+        error: { name: errorName, ...(errorCode ? { code: errorCode } : {}) },
+      },
+      "server failed to start",
     );
     process.exitCode = 1;
   });

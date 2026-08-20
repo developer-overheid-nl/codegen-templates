@@ -218,6 +218,9 @@ export const apiImplementations = {
 };
 ```
 
-De bootstrap in `app/index.ts` leest deze implementaties automatisch in. De
-Fastify-runtime schrijft gestructureerde Pino-logs met een veilige request-id
-en precies één completion-log per request.
+De bootstrap in `app/index.ts` leest deze implementaties automatisch in.
+Iedere logregel is één JSON-object met een ISO-timestamp, een
+hoofdletter-loglevel en de vaste velden `msg`, `app`, `component` en
+`operation`. HTTP-logs gebruiken snake_case-velden, bevatten geen querystring
+in `path`, hebben een veilige `request_id` en behandelen alleen `5xx` als
+`ERROR`.

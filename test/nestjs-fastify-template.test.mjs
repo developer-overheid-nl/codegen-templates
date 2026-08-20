@@ -189,17 +189,17 @@ const { createApp } = require("./dist/app/index.js");
   const startup = spawnSync(process.execPath, ["dist/app/index.js"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOST: "127.0.0.1", PORT: String(blockerAddress.port), LOG_LEVEL: "silent" },
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(blockerAddress.port), LOG_LEVEL: "error" },
   });
   await new Promise((resolve) => blocker.close(resolve));
-  const startupFailure = startup.stderr
+  const startupFailure = startup.stdout
     .split("\\n")
     .filter(Boolean)
     .flatMap((line) => {
       try { return [JSON.parse(line)]; } catch { return []; }
     })
-    .find((entry) => entry.event === "application.startup.failed");
-  console.log("STARTUP " + JSON.stringify({ status: startup.status, failure: startupFailure }));
+    .find((entry) => entry.component === "http_server" && entry.operation === "listen");
+  console.log("STARTUP " + JSON.stringify({ status: startup.status, stderr: startup.stderr, failure: startupFailure }));
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
@@ -262,14 +262,18 @@ const { createApp } = require("./dist/app/index.js");
       requestId: "exploded-123",
     },
   });
-  assert.deepEqual(JSON.parse(startupLine.slice(8)), {
-    status: 1,
-    failure: {
-      app: "tools-api",
-      event: "application.startup.failed",
-      errorName: "Error",
-      errorCode: "EADDRINUSE",
-    },
+  const startupResult = JSON.parse(startupLine.slice(8));
+  assert.equal(startupResult.status, 1);
+  assert.equal(startupResult.stderr, "");
+  assert.match(startupResult.failure.time, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.deepEqual({ ...startupResult.failure, time: undefined }, {
+    time: undefined,
+    level: "ERROR",
+    msg: "server failed to start",
+    app: "tools-api",
+    component: "http_server",
+    operation: "listen",
+    error: { name: "Error", code: "EADDRINUSE" },
   });
 
   const logs = lines.flatMap((line) => {
@@ -280,30 +284,49 @@ const { createApp } = require("./dist/app/index.js");
     }
   });
   assert.equal(logs.length > 0, true);
-  assert.equal(logs.every((entry) => entry.app === "tools-api"), true);
-  assert.equal(logs.some((entry) => "service" in entry), false);
-  const completions = logs.filter((entry) =>
-    ["http.request.completed", "http.request.aborted"].includes(entry.event),
-  );
+  for (const entry of logs) {
+    assert.match(entry.time, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.equal(["DEBUG", "INFO", "WARN", "ERROR"].includes(entry.level), true);
+    assert.equal(entry.app, "tools-api");
+    assert.equal(typeof entry.msg, "string");
+    assert.equal(typeof entry.component, "string", JSON.stringify(entry));
+    assert.equal(typeof entry.operation, "string", JSON.stringify(entry));
+    assert.equal("service" in entry, false);
+    assert.equal("version" in entry, false);
+    assert.equal("environment" in entry, false);
+    assert.equal("event" in entry, false);
+  }
+  const completions = logs.filter((entry) => entry.component === "http_server" && entry.operation === "request");
   assert.equal(completions.length, 7);
   assert.deepEqual(
-    completions.map(({ event, level, requestId, route, statusCode }) => ({
-      event,
+    completions.map(({ level, msg, request_id, route, path, status_code }) => ({
       level,
-      requestId,
+      msg,
+      request_id,
       route,
-      statusCode,
+      path,
+      status_code,
     })),
     [
-      { event: "http.request.completed", level: 30, requestId: "req-123", route: "/ping", statusCode: 200 },
-      { event: "http.request.completed", level: 40, requestId: "missing-123", route: "/missing", statusCode: 404 },
-      { event: "http.request.completed", level: 40, requestId: "invalid-123", route: "/ping", statusCode: 400 },
-      { event: "http.request.completed", level: 40, requestId: "failed-123", route: "/ping", statusCode: 400 },
-      { event: "http.request.completed", level: 40, requestId: "body-123", route: "/missing", statusCode: 404 },
-      { event: "http.request.completed", level: 50, requestId: "exploded-123", route: "/ping", statusCode: 500 },
-      { event: "http.request.aborted", level: 40, requestId: "aborted-123", route: "/abort-test", statusCode: 499 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "req-123", route: "/ping", path: "/ping", status_code: 200 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "missing-123", route: "/missing", path: "/missing", status_code: 404 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "invalid-123", route: "/ping", path: "/ping", status_code: 400 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "failed-123", route: "/ping", path: "/ping", status_code: 400 },
+      { level: "INFO", msg: "HTTP request completed", request_id: "body-123", route: "/missing", path: "/missing", status_code: 404 },
+      { level: "ERROR", msg: "HTTP request completed", request_id: "exploded-123", route: "/ping", path: "/ping", status_code: 500 },
+      { level: "INFO", msg: "HTTP request aborted", request_id: "aborted-123", route: "/abort-test", path: "/abort-test", status_code: 499 },
     ],
   );
+  for (const completion of completions) {
+    assert.equal(Number.isInteger(completion.duration_ms), true);
+    assert.equal(completion.duration_ms >= 0, true);
+    assert.equal(Number.isInteger(completion.response_bytes), true);
+    assert.equal(completion.response_bytes >= 0, true);
+    assert.equal("reqId" in completion, false);
+    assert.equal("requestId" in completion, false);
+    assert.equal("statusCode" in completion, false);
+    assert.equal("durationMs" in completion, false);
+  }
   const serializedCompletions = JSON.stringify(completions);
   for (const secret of [
     "supersecret",

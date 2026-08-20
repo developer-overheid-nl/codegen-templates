@@ -131,9 +131,11 @@ export const apiImplementations = {
 };
 ```
 
-De gegenereerde bootstrap leest deze implementaties automatisch in. De runtime
-schrijft gestructureerde Pino-logs met een veilige request-id en precies één
-completion-log per request. Ontbrekende implementaties geven standaard
+De gegenereerde bootstrap leest deze implementaties automatisch in. Iedere
+logregel is één JSON-object met een ISO-timestamp, een hoofdletter-loglevel en
+de vaste velden `msg`, `app`, `component` en `operation`. HTTP-logs gebruiken
+snake_case-velden, bevatten geen querystring in `path` en behandelen alleen
+`5xx` als `ERROR`. Ontbrekende implementaties geven standaard
 `501 application/problem+json`.
 
 De integratietest genereert, compileert en start een minimale API:
