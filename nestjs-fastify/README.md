@@ -109,7 +109,7 @@ npx @openapitools/openapi-generator-cli generate \
   -o ./tools-api \
   -t ./openapi-generator-nestjs-fastify-template \
   -c ./openapi-generator-nestjs-fastify-template/generator-config.yaml \
-  --additional-properties=npmName=tools-api,npmVersion=1.0.0,nestVersion=11.0.0,tsVersion=5.9.3
+  --additional-properties=npmName=tools-api,npmVersion=1.0.0,nestVersion=12.1.1,tsVersion=7.0.2,rxjsVersion=7.8.2,nodeVersion=22.20.4
 ```
 
 Kopieer dezelfde gebundelde OAS naar de runtime-locatie:

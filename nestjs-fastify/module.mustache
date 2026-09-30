@@ -425,6 +425,16 @@ const hasOpenApiPath = (document: unknown, path: string): boolean =>
   (document as { paths: Record<string, unknown> }).paths !== null &&
   path in (document as { paths: Record<string, unknown> }).paths;
 
+// Shared major-version segment of all spec paths (e.g. "/v1"), so the spec is also served next to the operations.
+const openApiVersionPrefix = (document: unknown): string | undefined => {
+  if (typeof document !== "object" || document === null || !("paths" in document)) return undefined;
+  const paths = (document as { paths?: unknown }).paths;
+  if (typeof paths !== "object" || paths === null) return undefined;
+  const prefixes = new Set(Object.keys(paths).map((path) => /^\/v\d+(?=\/)/.exec(path)?.[0]));
+  const [prefix] = prefixes;
+  return prefixes.size === 1 ? prefix : undefined;
+};
+
 const isJsonLikeContentType = (contentType: unknown): boolean =>
   typeof contentType === "string" && /\bjson\b/i.test(contentType);
 
@@ -526,8 +536,12 @@ export const createApp = async (): Promise<NestFastifyApplication> => {
     pathPattern: openApiPathToRegExp(operation.path),
   }));
   const generatedOpenApiPaths = new Set<string>();
-  if (!hasOpenApiPath(openapiDocument, "/openapi.yaml")) generatedOpenApiPaths.add("/openapi.yaml");
-  if (!hasOpenApiPath(openapiDocument, "/openapi.json")) generatedOpenApiPaths.add("/openapi.json");
+  const versionPrefix = openApiVersionPrefix(openapiDocument);
+  for (const prefix of versionPrefix ? ["", versionPrefix] : [""]) {
+    for (const file of ["/openapi.yaml", "/openapi.json"]) {
+      if (!hasOpenApiPath(openapiDocument, `${prefix}${file}`)) generatedOpenApiPaths.add(`${prefix}${file}`);
+    }
+  }
   const isGeneratedOpenApiEndpoint = (path: string): boolean => generatedOpenApiPaths.has(path.split("?")[0] ?? path);
 
   fastify.addHook("preValidation", async (request, reply) => {
@@ -658,11 +672,12 @@ export const createApp = async (): Promise<NestFastifyApplication> => {
 
     return payload;
   });
-  if (generatedOpenApiPaths.has("/openapi.yaml")) {
-    fastify.get("/openapi.yaml", async (_request, reply) => reply.type("text/yaml; charset=utf-8").send(openapiYaml));
-  }
-  if (generatedOpenApiPaths.has("/openapi.json")) {
-    fastify.get("/openapi.json", async () => openapiDocument);
+  for (const path of generatedOpenApiPaths) {
+    if (path.endsWith(".yaml")) {
+      fastify.get(path, async (_request, reply) => reply.type("text/yaml; charset=utf-8").send(openapiYaml));
+    } else {
+      fastify.get(path, async () => openapiDocument);
+    }
   }
 
   return app;
