@@ -93,9 +93,11 @@ const statusText = (status: number): string => {
   return texts[status] ?? "Unknown Error";
 };
 
-const toProblem = (status: number, title: string, errors?: ProblemError[]) => ({
-  title,
+// RFC 9457: title is the generic summary of the status, detail explains this occurrence.
+const toProblem = (status: number, detail: string, errors?: ProblemError[]) => ({
+  title: statusText(status),
   status,
+  detail,
   ...(errors?.length ? { errors } : {}),
 });
 
